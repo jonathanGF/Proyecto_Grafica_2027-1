@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <string>
+#include "Model.h"
 
 // Librerías para carga de imágenes y matemáticas (GLM y SOIL2)
 #include "SOIL2/SOIL2.h"
@@ -209,6 +210,7 @@ int main() {
         return -1;
     }
     glfwMakeContextCurrent(window);
+    glfwSwapInterval(1); // Activa V-Sync
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
     // 3. Inicializar GLEW
@@ -280,6 +282,9 @@ int main() {
     skyboxShader.use();
     glUniform1i(glGetUniformLocation(skyboxShader.ID, "skybox"), 0);
 
+    // Cargar el modelo de prueba
+    Model modeloPrueba("Models/RedDog.obj");
+
     // 8. Ciclo principal (Game Loop)
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
@@ -297,9 +302,7 @@ int main() {
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
 
-        // ==========================================
-        // PARTE A: DIBUJAR CUBOS CON ILUMINACIÓN
-        // ==========================================
+      
         glDisable(GL_CULL_FACE);
         miShader.use();
 
@@ -327,13 +330,23 @@ int main() {
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-        // Cubo central
+        //// Cubo central
+        //glm::mat4 model = glm::mat4(1.0f);
+        //glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        //glBindVertexArray(cubeVAO);
+        //glDrawArrays(GL_TRIANGLES, 0, 36);
+
+        // Matriz de modelo para el objeto 3D
         glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
+        model = glm::scale(model, glm::vec3(1.0f)); // Ajustar si es necesario
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(model));
-        glBindVertexArray(cubeVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
+
+        // Renderizado del modelo
+        modeloPrueba.Draw(miShader);
 
         // 4 cubos pequeños indicadores de las velas
+        glBindVertexArray(cubeVAO); // <-- ENLAZAR EL VAO DEL CUBO
         for (unsigned int i = 0; i < 4; i++) {
             glm::mat4 lightModel = glm::mat4(1.0f);
             lightModel = glm::translate(lightModel, pointLightPositions[i]);
