@@ -78,6 +78,23 @@ void processInput(GLFWwindow* window) {
         cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
 }
 
+// Variables y función para el cálculo de FPS
+double lastFpsTime = 0.0;
+int nbFrames = 0;
+
+void showFPS(GLFWwindow* window) {
+    double currentTime = glfwGetTime();
+    nbFrames++;
+    if (currentTime - lastFpsTime >= 1.0) {
+        double fps = double(nbFrames) / (currentTime - lastFpsTime);
+        std::string title = "El Camino de las Animas | FPS: " + std::to_string((int)fps);
+        glfwSetWindowTitle(window, title.c_str());
+
+        nbFrames = 0;
+        lastFpsTime = currentTime;
+    }
+}
+
 // Vértices del cubo iluminado (Posiciones + Normales)
 float cubeVertices[] = {
     // Posiciones          // Normales
@@ -271,6 +288,7 @@ int main() {
 
         processInput(window);
 
+
         // Limpieza de pantalla
         glClearColor(0.05f, 0.05f, 0.1f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -345,6 +363,7 @@ int main() {
 
         glfwSwapBuffers(window);
         glfwPollEvents();
+        showFPS(window);
     }
 
     glDeleteVertexArrays(1, &cubeVAO);

@@ -399,3 +399,13 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# ==========================================
+# Excepciones para Modelos 3D del proyecto
+# ==========================================
+!**/Models/*.obj
+!**/Models/**/*.obj
+!**/models/*.obj
+!**/models/**/*.obj
+!**/assets/*.obj
+!**/assets/**/*.obj
