@@ -29,5 +29,11 @@
     <None Include="shader\shader.vert">
       <Filter>Archivos de origen\Shader</Filter>
     </None>
+    <None Include="shader\skybox.frag">
+      <Filter>Archivos de origen\Shader</Filter>
+    </None>
+    <None Include="shader\skybox.vert">
+      <Filter>Archivos de origen\Shader</Filter>
+    </None>
   </ItemGroup>
 </Project>
