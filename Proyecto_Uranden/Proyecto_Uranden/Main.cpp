@@ -74,6 +74,12 @@ int main() {
 	}
 
 	glfwMakeContextCurrent(window);
+	// Capturar el raton para controlar la camara
+	glfwSetInputMode(
+		window,
+		GLFW_CURSOR,
+		GLFW_CURSOR_DISABLED
+	);
 	glewExperimental = GL_TRUE;
 
 	//Verificación de errores de inicialización de glew
