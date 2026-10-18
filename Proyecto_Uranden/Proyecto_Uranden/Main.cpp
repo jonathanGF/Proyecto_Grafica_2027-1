@@ -12,18 +12,26 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include "CameraController.h"
+
+GLuint shaderProgram;
+
 const GLint WIDTH = 800, HEIGHT = 600;
 
 // Shaders
-const GLchar* vertexShaderSource = 
+const GLchar* vertexShaderSource =
 {
 	"#version 330 core\n"
 	"layout (location = 0) in vec3 position;\n"
+	"uniform mat4 model;\n"
+	"uniform mat4 view;\n"
+	"uniform mat4 projection;\n"
 	"void main()\n"
 	"{\n"
-	"gl_Position = vec4(position.x, position.y, position.z, 1.0);\n"
-	"}\0" 
+	"gl_Position = projection * view * model * vec4(position, 1.0f);\n"
+	"}\0"
 };
+
 const GLchar* fragmentShaderSource = 
 {
 	"#version 330 core\n"
@@ -143,21 +151,59 @@ int main() {
 
 	
 	
+	// Controlador del visitante
+	CameraController camara;
 
-
+	// Tiempo entre fotogramas
+	float ultimoFrame = (float)glfwGetTime();
 
 	while (!glfwWindowShouldClose(window))
 	{
 		// Check if any events have been activiated (key pressed, mouse moved etc.) and call corresponding response functions
 		glfwPollEvents();
 
+		// Actualizar movimiento de camara
+		float tiempoActual = (float)glfwGetTime();
+		float deltaTime = tiempoActual - ultimoFrame;
+		ultimoFrame = tiempoActual;
+
+		camara.Actualizar(window, deltaTime);
+
+		// Cerrar con ESC
+		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		{
+			glfwSetWindowShouldClose(window, GL_TRUE);
+		}
+
 		// Render
 		// Clear the colorbuffer
 		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 
 		// Draw our first triangle
+		// 1. Proyección (Lente de la cámara)
+		glm::mat4 projection = glm::perspective(glm::radians(45.0f), (GLfloat)screenWidth / (GLfloat)screenHeight, 0.1f, 100.0f);
+
+		// 2. Vista
+		glm::mat4 view = camara.ObtenerVista();
+
+		// 3. Modelo (Posición de la geometría)
+		glm::mat4 model = glm::mat4(1.0f);
+		// Rotamos -90 grados en X para que la "Y" se acueste en el piso (el canal)
+		model = glm::rotate(model, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+
+		// Obtener las locaciones en el shader (Ojo: Para esto ocupas que shaderProgram sea global o retornarlo de CrearShader)
+		// Para prueba rápida, si tu shaderProgram lo hiciste global o lo tienes a la mano:
+		glUseProgram(shaderProgram);
+
+		GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+		GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
+		GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
+
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
 		glBindVertexArray(VAO);
 		glDrawArrays(GL_TRIANGLES, 0, 24);
@@ -215,7 +261,7 @@ void CrearShader()
 
 	// Creamos un nuevo programa y se asignamos
 	// sus correspondientes vertex y fragment shaders
-	GLuint shaderProgram = glCreateProgram();
+	shaderProgram = glCreateProgram();
 	glAttachShader(shaderProgram, vertexShader);
 	glAttachShader(shaderProgram, fragmentShader);
 	glLinkProgram(shaderProgram);
