@@ -99,11 +99,22 @@ public:
     }
 
     void cleanup() {
-        if (musicLoaded)   ma_sound_uninit(&music);
-        if (ambientLoaded) ma_sound_uninit(&ambient);
-        if (voiceLoaded)   ma_sound_uninit(&voiceover);
-        if (initialized)   ma_engine_uninit(&engine);
-        initialized = false;
+        if (musicLoaded) {
+            ma_sound_uninit(&music);
+            musicLoaded = false;
+        }
+        if (ambientLoaded) {
+            ma_sound_uninit(&ambient);
+            ambientLoaded = false;
+        }
+        if (voiceLoaded) {
+            ma_sound_uninit(&voiceover);
+            voiceLoaded = false;
+        }
+        if (initialized) {
+            ma_engine_uninit(&engine);
+            initialized = false;
+        }
     }
 
     ~AudioEngine() {

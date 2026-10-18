@@ -142,6 +142,8 @@
     <None Include="shader\shader.vert" />
     <None Include="shader\skybox.frag" />
     <None Include="shader\skybox.vert" />
+    <None Include="shader\water.frag" />
+    <None Include="shader\water.vert" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AudioEngine.h" />

@@ -12,6 +12,7 @@
 #include "AudioEngine.h"
 
 #include "Shader.h"
+#include <vector>
 
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
@@ -194,6 +195,52 @@ glm::vec3 pointLightPositions[] = {
     glm::vec3(1.2f, 0.0f, -1.2f)
 };
 
+
+void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices, std::vector<unsigned int>& indices) {
+    float paso = tamano / (float)resolucion;
+    float mitad = tamano / 2.0f;
+
+    // 1. Generar vértices (Posición X, Y, Z | Normal X, Y, Z | UV S, T)
+    for (int i = 0; i <= resolucion; ++i) {
+        float z = -mitad + i * paso;
+        for (int j = 0; j <= resolucion; ++j) {
+            float x = -mitad + j * paso;
+
+            // Posición
+            vertices.push_back(x);
+            vertices.push_back(0.0f); // Altura inicial plana
+            vertices.push_back(z);
+
+            // Normal inicial hacia arriba
+            vertices.push_back(0.0f);
+            vertices.push_back(1.0f);
+            vertices.push_back(0.0f);
+
+            // Coordenadas UV
+            vertices.push_back((float)j / (float)resolucion);
+            vertices.push_back((float)i / (float)resolucion);
+        }
+    }
+
+    // 2. Generar índices de triángulos
+    for (int i = 0; i < resolucion; ++i) {
+        for (int j = 0; j < resolucion; ++j) {
+            int fila1 = i * (resolucion + 1);
+            int fila2 = (i + 1) * (resolucion + 1);
+
+            // Primer triángulo
+            indices.push_back(fila1 + j);
+            indices.push_back(fila2 + j);
+            indices.push_back(fila1 + j + 1);
+
+            // Segundo triángulo
+            indices.push_back(fila1 + j + 1);
+            indices.push_back(fila2 + j);
+            indices.push_back(fila2 + j + 1);
+        }
+    }
+}
+
 int main() {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -256,6 +303,43 @@ int main() {
         "skybox/zpos.png", "skybox/zneg.png",
         SOIL_LOAD_RGB, SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS
     );
+
+    // -------------------------------------------------------------
+    // VAO / VBO / EBO para la malla de agua
+    // -------------------------------------------------------------
+    std::vector<float> waterVertices;
+    std::vector<unsigned int> waterIndices;
+    int waterResolution = 100;   // Mayor densidad de vértices para olas más definidas
+    float waterSize = 100.0f;    // Tamaño amplio (100x100) para cubrir todo el horizonte visible
+    generarPlanoAgua(waterResolution, waterSize, waterVertices, waterIndices);
+
+    unsigned int waterVAO, waterVBO, waterEBO;
+    glGenVertexArrays(1, &waterVAO);
+    glGenBuffers(1, &waterVBO);
+    glGenBuffers(1, &waterEBO);
+
+    glBindVertexArray(waterVAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, waterVBO);
+    glBufferData(GL_ARRAY_BUFFER, waterVertices.size() * sizeof(float), waterVertices.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, waterIndices.size() * sizeof(unsigned int), waterIndices.data(), GL_STATIC_DRAW);
+
+    // Posición (X, Y, Z)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    // Normal (X, Y, Z)
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    // UVs (S, T)
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+
+    // Cargar el shader del agua
+    Shader waterShader("shader/water.vert", "shader/water.frag");
 
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -346,24 +430,47 @@ int main() {
         glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), false);
         glBindVertexArray(cubeVAO);
 
-        // Suelo / Muelle (color gris oscuro neutro para reflejar la luz blanca del foco)
-        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 0.2f, 0.2f, 0.2f);
+        // Suelo / Muelle (madera oscura y con profundidad hacia el fondo del agua)
+        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 0.35f, 0.22f, 0.14f);
         glm::mat4 floorModel = glm::mat4(1.0f);
-        floorModel = glm::translate(floorModel, glm::vec3(0.0f, -0.55f, 0.0f));
-        floorModel = glm::scale(floorModel, glm::vec3(8.0f, 0.1f, 8.0f));
+        floorModel = glm::translate(floorModel, glm::vec3(0.0f, -0.75f, 0.0f));
+        floorModel = glm::scale(floorModel, glm::vec3(8.0f, 0.5f, 8.0f)); // Grosor de 0.5 unidades
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(floorModel));
         glDrawArrays(GL_TRIANGLES, 0, 36);
 
-        // Indicadores de las velas (color naranja brillante)
+        // Indicadores de las velas (color naranja brillante y tamaño visible a distancia)
         glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 0.5f, 0.1f);
         for (unsigned int i = 0; i < 4; i++) {
             glm::mat4 lightModel = glm::mat4(1.0f);
             lightModel = glm::translate(lightModel, pointLightPositions[i]);
-            lightModel = glm::scale(lightModel, glm::vec3(0.08f));
+            lightModel = glm::scale(lightModel, glm::vec3(0.22f)); // Escala aumentada
             glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(lightModel));
             glDrawArrays(GL_TRIANGLES, 0, 36);
         }
         glBindVertexArray(0);
+        
+        // D. Dibujar Agua Deformable
+        waterShader.use();
+
+        // Enviar matrices view y projection
+        glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+        glUniform3fv(glGetUniformLocation(waterShader.ID, "viewPos"), 1, glm::value_ptr(cameraPos));
+        glUniform3f(glGetUniformLocation(waterShader.ID, "dirLightDir"), -0.2f, -1.0f, -0.3f);
+        glUniform1f(glGetUniformLocation(waterShader.ID, "time"), (float)glfwGetTime());
+
+        // Colocar el agua a ras delf muelle
+        // Matriz de modelo para el agua (bajamos la base para que las olas no inunden el muelle)
+        glm::mat4 waterModel = glm::mat4(1.0f);
+        waterModel = glm::translate(waterModel, glm::vec3(0.0f, -0.75f, 0.0f));
+        glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(waterModel));
+
+        glDisable(GL_CULL_FACE); // Evita que se descarte la superficie si la cámara la ve desde abajo o de lado
+        glBindVertexArray(waterVAO);
+        glDrawElements(GL_TRIANGLES, (GLsizei)waterIndices.size(), GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+      
 
         // C. Dibujar Skybox
         glDepthFunc(GL_LEQUAL);
@@ -388,6 +495,9 @@ int main() {
     glDeleteBuffers(1, &cubeVBO);
     glDeleteVertexArrays(1, &skyboxVAO);
     glDeleteBuffers(1, &skyboxVBO);
+    glDeleteVertexArrays(1, &waterVAO);
+    glDeleteBuffers(1, &waterVBO);
+    glDeleteBuffers(1, &waterEBO);
     audioEngine.cleanup();
 
     glfwTerminate();

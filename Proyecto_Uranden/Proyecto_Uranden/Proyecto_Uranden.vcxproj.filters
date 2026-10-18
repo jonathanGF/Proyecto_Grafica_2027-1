@@ -35,6 +35,12 @@
     <None Include="shader\skybox.vert">
       <Filter>Archivos de origen\Shader</Filter>
     </None>
+    <None Include="shader\water.frag">
+      <Filter>Archivos de origen\Shader</Filter>
+    </None>
+    <None Include="shader\water.vert">
+      <Filter>Archivos de origen\Shader</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AudioEngine.h">
