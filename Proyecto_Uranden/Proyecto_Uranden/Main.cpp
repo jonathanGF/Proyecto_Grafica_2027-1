@@ -5,11 +5,11 @@
 #include <string>
 #include "Model.h"
 
-// Librerías para carga de imágenes y matemáticas (GLM y SOIL2)
 #include "SOIL2/SOIL2.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include "AudioEngine.h"
 
 #include "Shader.h"
 
@@ -17,17 +17,16 @@ const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
 // Variables de la Cámara en primera persona
-glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
-glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+glm::vec3 cameraPos = glm::vec3(0.0f, 1.5f, 4.0f);
+glm::vec3 cameraFront = glm::vec3(0.0f, -0.2f, -1.0f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 
 bool firstMouse = true;
-float yaw = -90.0f; // Rotación horizontal
-float pitch = 0.0f; // Rotación vertical
+float yaw = -90.0f;
+float pitch = -10.0f;
 float lastX = 800.0f / 2.0f;
 float lastY = 600.0f / 2.0f;
 
-// Control de velocidad con el tiempo (DeltaTime)
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
@@ -79,7 +78,7 @@ void processInput(GLFWwindow* window) {
         cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
 }
 
-// Variables y función para el cálculo de FPS
+// Cálculo de FPS
 double lastFpsTime = 0.0;
 int nbFrames = 0;
 
@@ -187,22 +186,20 @@ float skyboxVertices[] = {
      1.0f, -1.0f,  1.0f
 };
 
-// Posiciones de las 4 luces puntuales (velas/ofrendas)
+// Posiciones de las 4 luces puntuales (velas)
 glm::vec3 pointLightPositions[] = {
-    glm::vec3(1.2f,  0.2f,  1.0f),
-    glm::vec3(-1.2f, -0.2f,  0.8f),
-    glm::vec3(-1.0f,  0.3f, -1.0f),
-    glm::vec3(0.0f, -0.4f, -1.2f)
+    glm::vec3(1.5f, 0.0f,  1.2f),
+    glm::vec3(-1.5f, 0.0f,  1.0f),
+    glm::vec3(-1.2f, 0.0f, -1.2f),
+    glm::vec3(1.2f, 0.0f, -1.2f)
 };
 
 int main() {
-    // 1. Inicializar GLFW
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    // 2. Crear ventana
     GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "El Camino de las Animas", NULL, NULL);
     if (window == NULL) {
         std::cout << "Fallo al crear la ventana GLFW" << std::endl;
@@ -210,10 +207,9 @@ int main() {
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1); // Activa V-Sync
+    glfwSwapInterval(1); // Sincronización vertical
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
-    // 3. Inicializar GLEW
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK) {
         std::cout << "Fallo al inicializar GLEW" << std::endl;
@@ -225,11 +221,10 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
 
-    // 4. Compilar shaders
     Shader miShader("shader/shader.vert", "shader/shader.frag");
     Shader skyboxShader("shader/skybox.vert", "shader/skybox.frag");
 
-    // 5. Configurar VAO/VBO del Cubo Iluminado
+    // VAO/VBO para cubos y plataforma
     unsigned int cubeVAO, cubeVBO;
     glGenVertexArrays(1, &cubeVAO);
     glGenBuffers(1, &cubeVBO);
@@ -243,7 +238,7 @@ int main() {
     glEnableVertexAttribArray(1);
     glBindVertexArray(0);
 
-    // 6. Configurar VAO/VBO del Skybox
+    // VAO/VBO Skybox
     unsigned int skyboxVAO, skyboxVBO;
     glGenVertexArrays(1, &skyboxVAO);
     glGenBuffers(1, &skyboxVBO);
@@ -255,22 +250,12 @@ int main() {
     glEnableVertexAttribArray(0);
     glBindVertexArray(0);
 
-    // 7. Cargar el Cubemap con SOIL2
     GLuint cubemapTexture = SOIL_load_OGL_cubemap(
-        "skybox/xpos.png",
-        "skybox/xneg.png",
-        "skybox/ypos.png",
-        "skybox/yneg.png",
-        "skybox/zpos.png",
-        "skybox/zneg.png",
-        SOIL_LOAD_RGB,
-        SOIL_CREATE_NEW_ID,
-        SOIL_FLAG_MIPMAPS
+        "skybox/xpos.png", "skybox/xneg.png",
+        "skybox/ypos.png", "skybox/yneg.png",
+        "skybox/zpos.png", "skybox/zneg.png",
+        SOIL_LOAD_RGB, SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS
     );
-
-    if (cubemapTexture == 0) {
-        std::cout << "ERROR::SOIL2::Fallo al cargar el cubemap: " << SOIL_last_result() << std::endl;
-    }
 
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -282,10 +267,21 @@ int main() {
     skyboxShader.use();
     glUniform1i(glGetUniformLocation(skyboxShader.ID, "skybox"), 0);
 
-    // Cargar el modelo de prueba
+    // Carga del modelo 3D
     Model modeloPrueba("Models/RedDog.obj");
 
-    // 8. Ciclo principal (Game Loop)
+    // -------------------------------------------------------------
+    // Sistema de Audio (miniaudio)
+    // -------------------------------------------------------------
+    AudioEngine audioEngine;
+    if (!audioEngine.init()) {
+        std::cout << "ERROR::MINIAUDIO::No se pudo inicializar el motor de audio" << std::endl;
+    }
+
+    // Reproducción en bucle de música y ambiente
+    audioEngine.playMusic("audio/Ofrenda_en_el_Agua.mp3", 0.35f, true);
+    audioEngine.playAmbient("audio/ambiente.mp3", 0.25f, true);
+
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
         deltaTime = currentFrame - lastFrame;
@@ -293,75 +289,85 @@ int main() {
 
         processInput(window);
 
-
-        // Limpieza de pantalla
-        glClearColor(0.05f, 0.05f, 0.1f, 1.0f);
+        glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Matrices de proyección y vista
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
 
-      
-        glDisable(GL_CULL_FACE);
         miShader.use();
-
         glUniform3fv(glGetUniformLocation(miShader.ID, "viewPos"), 1, glm::value_ptr(cameraPos));
-        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 0.7f, 0.7f, 0.75f);
-
-        // Luz Direccional (Luna)
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.direction"), -0.2f, -1.0f, -0.3f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.ambient"), 0.03f, 0.04f, 0.07f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.diffuse"), 0.20f, 0.25f, 0.35f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.specular"), 0.15f, 0.20f, 0.25f);
-
-        // Luces Puntuales (Velas)
-        for (unsigned int i = 0; i < 4; i++) {
-            std::string base = "pointLights[" + std::to_string(i) + "].";
-            glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(pointLightPositions[i]));
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.05f, 0.02f, 0.00f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 1.00f, 0.55f, 0.15f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 1.00f, 0.70f, 0.30f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.09f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.032f);
-        }
-
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-        //// Cubo central
-        //glm::mat4 model = glm::mat4(1.0f);
-        //glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(model));
-        //glBindVertexArray(cubeVAO);
-        //glDrawArrays(GL_TRIANGLES, 0, 36);
+        // 1. Luz Direccional (Luna)
+        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.direction"), -0.2f, -1.0f, -0.3f);
+        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.ambient"), 0.05f, 0.05f, 0.08f);
+        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.diffuse"), 0.15f, 0.20f, 0.28f);
+        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.specular"), 0.20f, 0.20f, 0.25f);
 
-        // Matriz de modelo para el objeto 3D
+        // 2. Luces Puntuales (Velas) - Intensidad equilibrada
+        for (unsigned int i = 0; i < 4; i++) {
+            std::string base = "pointLights[" + std::to_string(i) + "].";
+            glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(pointLightPositions[i]));
+            glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.02f, 0.01f, 0.00f);
+            glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 0.60f, 0.30f, 0.08f);
+            glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.50f, 0.30f, 0.10f);
+            glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.14f);
+            glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.07f);
+        }
+
+        // 3. Reflector de la ribera (Spotlight) - Foco cenital blanco
+        glm::vec3 spotLightPos = glm::vec3(0.0f, 3.5f, 1.0f);
+        glm::vec3 spotLightDir = glm::normalize(glm::vec3(0.0f, -1.0f, -0.3f)); // Apuntando al centro
+
+        glUniform3fv(glGetUniformLocation(miShader.ID, "spotLight.position"), 1, glm::value_ptr(spotLightPos));
+        glUniform3fv(glGetUniformLocation(miShader.ID, "spotLight.direction"), 1, glm::value_ptr(spotLightDir));
+        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.cutOff"), glm::cos(glm::radians(18.0f)));
+        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.outerCutOff"), glm::cos(glm::radians(24.0f)));
+
+        glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.ambient"), 0.0f, 0.0f, 0.0f);
+        glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.diffuse"), 1.8f, 1.8f, 1.9f); // Blanco frío contrastante
+        glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.specular"), 1.0f, 1.0f, 1.0f);
+        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.constant"), 1.0f);
+        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.linear"), 0.07f);
+        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.quadratic"), 0.017f);
+
+        // A. Dibujar el modelo 3D (activar muestreo de textura)
+        glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), true);
+
         glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
-        model = glm::scale(model, glm::vec3(1.0f)); // Ajustar si es necesario
+        model = glm::translate(model, glm::vec3(0.0f, -0.2f, 0.0f));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(model));
-
-        // Renderizado del modelo
         modeloPrueba.Draw(miShader);
 
-        // 4 cubos pequeños indicadores de las velas
-        glBindVertexArray(cubeVAO); // <-- ENLAZAR EL VAO DEL CUBO
+        // B. Dibujar objetos sólidos (desactivar textura y usar color base)
+        glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), false);
+        glBindVertexArray(cubeVAO);
+
+        // Suelo / Muelle (color gris oscuro neutro para reflejar la luz blanca del foco)
+        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 0.2f, 0.2f, 0.2f);
+        glm::mat4 floorModel = glm::mat4(1.0f);
+        floorModel = glm::translate(floorModel, glm::vec3(0.0f, -0.55f, 0.0f));
+        floorModel = glm::scale(floorModel, glm::vec3(8.0f, 0.1f, 8.0f));
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(floorModel));
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+
+        // Indicadores de las velas (color naranja brillante)
+        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 0.5f, 0.1f);
         for (unsigned int i = 0; i < 4; i++) {
             glm::mat4 lightModel = glm::mat4(1.0f);
             lightModel = glm::translate(lightModel, pointLightPositions[i]);
-            lightModel = glm::scale(lightModel, glm::vec3(0.1f));
+            lightModel = glm::scale(lightModel, glm::vec3(0.08f));
             glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(lightModel));
             glDrawArrays(GL_TRIANGLES, 0, 36);
         }
         glBindVertexArray(0);
 
-        // ==========================================
-        // PARTE B: DIBUJAR EL SKYBOX
-        // ==========================================
+        // C. Dibujar Skybox
         glDepthFunc(GL_LEQUAL);
         skyboxShader.use();
-
         glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
         glUniformMatrix4fv(glGetUniformLocation(skyboxShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(skyboxView));
         glUniformMatrix4fv(glGetUniformLocation(skyboxShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
@@ -371,7 +377,6 @@ int main() {
         glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
         glDrawArrays(GL_TRIANGLES, 0, 36);
         glBindVertexArray(0);
-
         glDepthFunc(GL_LESS);
 
         glfwSwapBuffers(window);
@@ -383,6 +388,7 @@ int main() {
     glDeleteBuffers(1, &cubeVBO);
     glDeleteVertexArrays(1, &skyboxVAO);
     glDeleteBuffers(1, &skyboxVBO);
+    audioEngine.cleanup();
 
     glfwTerminate();
     return 0;
