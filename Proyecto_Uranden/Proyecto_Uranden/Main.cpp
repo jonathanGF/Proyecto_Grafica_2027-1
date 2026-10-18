@@ -1,10 +1,16 @@
 #include<iostream>
 
-//#define GLEW_STATIC
+#define GLEW_STATIC
 
 #include <GL/glew.h>
 
 #include <GLFW/glfw3.h>
+
+#include <glm/glm.hpp>
+
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <glm/gtc/type_ptr.hpp>
 
 const GLint WIDTH = 800, HEIGHT = 600;
 
@@ -82,11 +88,39 @@ int main() {
 	CrearShader();
 
 	// Set up vertex data (and buffer(s)) and attribute pointers
-	GLfloat vertices[] =
-	{
-		-0.5f, -0.5f, 0.0f, // Left
-		0.5f, -0.5f, 0.0f, // Right
-		0.0f,  0.5f, 0.0f  // Top
+	GLfloat vertices[] = {
+		// CANAL Y
+		// Tronco principal
+		-0.3f, -0.8f, 0.0f,
+		 0.3f, -0.8f, 0.0f,
+		 0.3f,  0.2f, 0.0f,
+		 0.3f,  0.2f, 0.0f,
+		-0.3f,  0.2f, 0.0f,
+		-0.3f, -0.8f, 0.0f,
+
+		// Brazo Izquierdo
+		-0.3f,  0.2f, 0.0f,
+		 0.0f,  0.2f, 0.0f,
+		-0.6f,  0.8f, 0.0f,
+		-0.6f,  0.8f, 0.0f,
+		-0.9f,  0.8f, 0.0f,
+		-0.3f,  0.2f, 0.0f,
+
+		// Brazo Derecho
+		 0.0f,  0.2f, 0.0f,
+		 0.3f,  0.2f, 0.0f,
+		 0.9f,  0.8f, 0.0f,
+		 0.9f,  0.8f, 0.0f,
+		 0.6f,  0.8f, 0.0f,
+		 0.0f,  0.2f, 0.0f,
+
+		 // === PARADOR EMPEDRADO ===
+		  0.3f, -0.4f, 0.0f,
+		  0.8f, -0.4f, 0.0f,
+		  0.8f,  0.2f, 0.0f,
+		  0.8f,  0.2f, 0.0f,
+		  0.3f,  0.2f, 0.0f,
+		  0.3f, -0.4f, 0.0f
 	};
 
 
@@ -126,7 +160,7 @@ int main() {
 		// Draw our first triangle
 
 		glBindVertexArray(VAO);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glDrawArrays(GL_TRIANGLES, 0, 24);
 		glBindVertexArray(0);
 
 		// Swap the screen buffers
