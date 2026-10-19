@@ -137,4 +137,9 @@ public:
             arriba
         );
     }
+    // Permite consultar la posicion del visitante
+    glm::vec3 ObtenerPosicion() const
+    {
+        return posicion;
+    }
 };

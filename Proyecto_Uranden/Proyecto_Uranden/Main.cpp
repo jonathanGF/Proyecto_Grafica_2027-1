@@ -14,6 +14,8 @@
 
 #include "CameraController.h"
 
+#include "InteractionManager.h"
+
 GLuint shaderProgram;
 
 const GLint WIDTH = 800, HEIGHT = 600;
@@ -160,6 +162,9 @@ int main() {
 	// Controlador del visitante
 	CameraController camara;
 
+	// Administrador de estaciones interactivas
+	InteractionManager interacciones;
+
 	// Tiempo entre fotogramas
 	float ultimoFrame = (float)glfwGetTime();
 
@@ -174,6 +179,12 @@ int main() {
 		ultimoFrame = tiempoActual;
 
 		camara.Actualizar(window, deltaTime);
+
+		// Detectar proximidad y activar estaciones
+		interacciones.Actualizar(
+			window,
+			camara.ObtenerPosicion()
+		);
 
 		// Cerrar con ESC
 		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
