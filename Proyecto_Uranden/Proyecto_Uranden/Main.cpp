@@ -1,4 +1,11 @@
+
 #define GLEW_STATIC
+
+#include<iostream>
+
+#define GLEW_STATIC
+
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -15,12 +22,12 @@
 #include "AudioEngine.h"
 
 // =========================================================================
-// 1. CONSTANTES Y CONFIGURACI覰 GLOBAL
+// 1. CONSTANTES Y CONFIGURACI脫N GLOBAL
 // =========================================================================
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
-// Configuraci髇 de la C醡ara
+// Configuraci贸n de la C谩mara
 glm::vec3 cameraPos = glm::vec3(0.0f, 1.5f, 4.0f);
 glm::vec3 cameraFront = glm::vec3(0.0f, -0.2f, -1.0f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -37,7 +44,7 @@ float lastFrame = 0.0f;
 double lastFpsTime = 0.0;
 int nbFrames = 0;
 
-// Constantes de Simulaci髇
+// Constantes de Simulaci贸n
 const float VELOCIDAD_CIRCUITO = 0.035f;
 
 // =========================================================================
@@ -77,10 +84,235 @@ const std::vector<glm::vec3> puntosCircuito = {
 
     // 4. Retorno superior (cruza de derecha a izquierda frente a la isla)
     glm::vec3(0.5f, -0.65f, -0.6f),   // Curva superior hacia el centro
-    glm::vec3(-0.6f, -0.65f, -0.5f)    // Reincorporaci髇 frente al muelle
+    glm::vec3(-0.6f, -0.65f, -0.5f)    // Reincorporaci贸n frente al muelle
 };
 
-// Geometr韆 del Skybox
+#include <glm/glm.hpp>
+
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <glm/gtc/type_ptr.hpp>
+
+#include "CameraController.h"
+
+#include "InteractionManager.h"
+
+GLuint shaderProgram;
+
+const GLint WIDTH = 800, HEIGHT = 600;
+
+// Shaders
+const GLchar* vertexShaderSource =
+{
+	"#version 330 core\n"
+	"layout (location = 0) in vec3 position;\n"
+	"uniform mat4 model;\n"
+	"uniform mat4 view;\n"
+	"uniform mat4 projection;\n"
+	"void main()\n"
+	"{\n"
+	"gl_Position = projection * view * model * vec4(position, 1.0f);\n"
+	"}\0"
+};
+
+const GLchar* fragmentShaderSource = 
+{
+	"#version 330 core\n"
+	"out vec4 color;\n"
+	"void main()\n"
+	"{\n"
+	"color = vec4(1.0f, 0.5f, 0.2f, 1.0f);\n"
+	"}\n\0"
+};
+
+// Funciones de configuracion del shader
+
+void CrearShader(void);
+
+
+
+
+int main() {
+	glfwInit();
+	//Verificaci贸n de compatibilidad 
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+
+	GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "Practica 0", nullptr, nullptr);
+	
+	int screenWidth, screenHeight;
+
+	glfwGetFramebufferSize(window, &screenWidth, &screenHeight);
+
+	//Verificaci贸n de errores de creacion  ventana
+	if (nullptr == window) 
+	{
+		std::cout << "Failed to create GLFW window" << std::endl;
+		glfwTerminate();
+
+		return EXIT_FAILURE;
+	}
+
+	glfwMakeContextCurrent(window);
+	// Capturar el raton para controlar la camara
+	glfwSetInputMode(
+		window,
+		GLFW_CURSOR,
+		GLFW_CURSOR_DISABLED
+	);
+	glewExperimental = GL_TRUE;
+
+	//Verificaci贸n de errores de inicializaci贸n de glew
+
+	if (GLEW_OK != glewInit()) {
+		std::cout << "Failed to initialise GLEW" << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	// Imprimimos informacin de OpenGL del sistema
+	std::cout << "> Version: " << glGetString(GL_VERSION) << std::endl;
+	std::cout << "> Vendor: " << glGetString(GL_VENDOR) << std::endl;
+	std::cout << "> Renderer: " << glGetString(GL_RENDERER) << std::endl;
+	std::cout << "> SL Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
+
+
+	// Define las dimensiones del viewport
+	glViewport(0, 0, screenWidth, screenHeight);
+
+	CrearShader();
+
+	// Set up vertex data (and buffer(s)) and attribute pointers
+	GLfloat vertices[] = {
+		// CANAL Y
+		// Tronco principal
+		-0.3f, -0.8f, 0.0f,
+		 0.3f, -0.8f, 0.0f,
+		 0.3f,  0.2f, 0.0f,
+		 0.3f,  0.2f, 0.0f,
+		-0.3f,  0.2f, 0.0f,
+		-0.3f, -0.8f, 0.0f,
+
+		// Brazo Izquierdo
+		-0.3f,  0.2f, 0.0f,
+		 0.0f,  0.2f, 0.0f,
+		-0.6f,  0.8f, 0.0f,
+		-0.6f,  0.8f, 0.0f,
+		-0.9f,  0.8f, 0.0f,
+		-0.3f,  0.2f, 0.0f,
+
+		// Brazo Derecho
+		 0.0f,  0.2f, 0.0f,
+		 0.3f,  0.2f, 0.0f,
+		 0.9f,  0.8f, 0.0f,
+		 0.9f,  0.8f, 0.0f,
+		 0.6f,  0.8f, 0.0f,
+		 0.0f,  0.2f, 0.0f,
+
+		 // === PARADOR EMPEDRADO ===
+		  0.3f, -0.4f, 0.0f,
+		  0.8f, -0.4f, 0.0f,
+		  0.8f,  0.2f, 0.0f,
+		  0.8f,  0.2f, 0.0f,
+		  0.3f,  0.2f, 0.0f,
+		  0.3f, -0.4f, 0.0f
+	};
+
+
+	GLuint VBO, VAO;
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+	// Bind the Vertex Array Object first, then bind and set vertex buffer(s) and attribute pointer(s).
+	glBindVertexArray(VAO);
+
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid *)0);
+	glEnableVertexAttribArray(0);
+
+	glBindBuffer(GL_ARRAY_BUFFER, 0); // Note that this is allowed, the call to glVertexAttribPointer registered VBO as the currently bound vertex buffer object so afterwards we can safely unbind
+
+	glBindVertexArray(0); // Unbind VAO (it's always a good thing to unbind any buffer/array to prevent strange bugs)
+
+
+	
+	
+	// Controlador del visitante
+	CameraController camara;
+
+	// Administrador de estaciones interactivas
+	InteractionManager interacciones;
+
+	// Tiempo entre fotogramas
+	float ultimoFrame = (float)glfwGetTime();
+
+	while (!glfwWindowShouldClose(window))
+	{
+		// Check if any events have been activiated (key pressed, mouse moved etc.) and call corresponding response functions
+		glfwPollEvents();
+
+		// Actualizar movimiento de camara
+		float tiempoActual = (float)glfwGetTime();
+		float deltaTime = tiempoActual - ultimoFrame;
+		ultimoFrame = tiempoActual;
+
+		camara.Actualizar(window, deltaTime);
+
+		// Detectar proximidad y activar estaciones
+		interacciones.Actualizar(
+			window,
+			camara.ObtenerPosicion()
+		);
+
+		// Cerrar con ESC
+		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		{
+			glfwSetWindowShouldClose(window, GL_TRUE);
+		}
+
+		// Render
+		// Clear the colorbuffer
+		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+
+		// Draw our first triangle
+		// 1. Proyecci贸n (Lente de la c谩mara)
+		glm::mat4 projection = glm::perspective(glm::radians(45.0f), (GLfloat)screenWidth / (GLfloat)screenHeight, 0.1f, 100.0f);
+
+		// 2. Vista
+		glm::mat4 view = camara.ObtenerVista();
+
+		// 3. Modelo (Posici贸n de la geometr铆a)
+		glm::mat4 model = glm::mat4(1.0f);
+		// Rotamos -90 grados en X para que la "Y" se acueste en el piso (el canal)
+		model = glm::rotate(model, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+
+		// Obtener las locaciones en el shader (Ojo: Para esto ocupas que shaderProgram sea global o retornarlo de CrearShader)
+		// Para prueba r谩pida, si tu shaderProgram lo hiciste global o lo tienes a la mano:
+		glUseProgram(shaderProgram);
+
+		GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+		GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
+		GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
+
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+		glBindVertexArray(VAO);
+		glDrawArrays(GL_TRIANGLES, 0, 24);
+		glBindVertexArray(0);
+
+		// Swap the screen buffers
+		glfwSwapBuffers(window);
+	}
+
+
+// Geometr铆a del Skybox
 const float skyboxVertices[] = {
     -1.0f,  1.0f, -1.0f,  -1.0f, -1.0f, -1.0f,   1.0f, -1.0f, -1.0f,
      1.0f, -1.0f, -1.0f,   1.0f,  1.0f, -1.0f,  -1.0f,  1.0f, -1.0f,
@@ -97,7 +329,7 @@ const float skyboxVertices[] = {
 };
 
 // =========================================================================
-// 3. FUNCIONES MATEM罷ICAS Y DE GENERACI覰 PROCEDURAL
+// 3. FUNCIONES MATEM脕TICAS Y DE GENERACI脫N PROCEDURAL
 // =========================================================================
 
 glm::vec3 calcularCatmullRom(const glm::vec3& p0, const glm::vec3& p1,
@@ -110,6 +342,51 @@ glm::vec3 calcularCatmullRom(const glm::vec3& p0, const glm::vec3& p1,
         (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
         (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
 }
+    // Creamos el vertex shader y guardamos su identificador
+	// Vertex shader
+	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+	glCompileShader(vertexShader);
+
+
+	// Verificamos los errores en tiempo de ejecuci贸n
+	GLint success;
+	GLchar infoLog[512];
+
+
+	glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+
+	
+	if (!success)
+	{
+		glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+		std::cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+	}
+
+
+	// Creamos el fragment shader y guardamos su identificador
+	// Fragment shader
+	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+	glCompileShader(fragmentShader);
+
+	// Verificamos los errores en tiempo de ejecuci贸n
+
+	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+
+	if (!success)
+	{
+		glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+		std::cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+	}
+
+	// Creamos un nuevo programa y se asignamos
+	// sus correspondientes vertex y fragment shaders
+	shaderProgram = glCreateProgram();
+	glAttachShader(shaderProgram, vertexShader);
+	glAttachShader(shaderProgram, fragmentShader);
+	glLinkProgram(shaderProgram);
+	glUseProgram(shaderProgram);
 
 void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices, std::vector<unsigned int>& indices) {
     float paso = tamano / (float)resolucion;
@@ -120,7 +397,7 @@ void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices
         for (int j = 0; j <= resolucion; ++j) {
             float x = -mitad + j * paso;
 
-            // Posici髇 (X, Y, Z)
+            // Posici贸n (X, Y, Z)
             vertices.push_back(x);
             vertices.push_back(0.0f);
             vertices.push_back(z);
@@ -217,11 +494,11 @@ void showFPS(GLFWwindow* window) {
 }
 
 // =========================================================================
-// 5. FUNCI覰 PRINCIPAL
+// 5. FUNCI脫N PRINCIPAL
 // =========================================================================
 
 int main() {
-    // --- Inicializaci髇 GLFW & OpenGL Context ---
+    // --- Inicializaci贸n GLFW & OpenGL Context ---
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -325,10 +602,10 @@ int main() {
 
         processInput(window);
 
-        // --- B. Actualizaci髇 de Cinem醫ica y Animaci髇 (Update) ---
+        // --- B. Actualizaci贸n de Cinem谩tica y Animaci贸n (Update) ---
         float tiempoAnim = currentFrame;
 
-        // Din醡ica de remadas
+        // Din谩mica de remadas
         float cicloRemo = std::fmod(tiempoAnim, 2.2f) / 2.2f;
         float impulsoRemo = std::pow(std::sin(cicloRemo * 3.14159f), 0.7f) * 0.4f;
         float avanceGlobal = (tiempoAnim * VELOCIDAD_CIRCUITO) + (impulsoRemo * 0.015f);
@@ -346,27 +623,27 @@ int main() {
         glm::vec3 posActual = calcularCatmullRom(puntosCircuito[i0], puntosCircuito[i1],
             puntosCircuito[i2], puntosCircuito[i3], t);
 
-        // Vector tangente y orientaci髇 hacia el avance
+        // Vector tangente y orientaci贸n hacia el avance
         float deltaT = 0.01f;
         glm::vec3 posFutura = calcularCatmullRom(puntosCircuito[i0], puntosCircuito[i1],
             puntosCircuito[i2], puntosCircuito[i3], t + deltaT);
         glm::vec3 direccionAvance = glm::normalize(posFutura - posActual);
         float anguloRumbo = glm::degrees(std::atan2(direccionAvance.x, direccionAvance.z));
 
-        // Oscilaciones por f韘ica de agua (m醩 suaves)
+        // Oscilaciones por f铆sica de agua (m谩s suaves)
         float bamboleoRoll = std::sin(cicloRemo * 6.28318f) * 1.5f;  // Antes 2.8f
         float cabeceoPitch = std::cos(cicloRemo * 6.28318f) * 0.8f;  // Antes 1.5f
         float flotacionOlas = std::sin(tiempoAnim * 1.0f) * 0.01f;   // Antes * 2.5f y * 0.02f
         posActual.y += flotacionOlas;
 
-        // Posici髇 y parpadeo de la luz puntual din醡ica (Canoa)
+        // Posici贸n y parpadeo de la luz puntual din谩mica (Canoa)
         glm::vec3 posLuzCanoa = posActual + glm::vec3(0.0f, 0.18f, 0.0f);
         float parpadeoCanoa = 0.85f + 0.15f * std::sin(tiempoAnim * 14.0f + 2.5f);
         glm::vec3 colorLuzCanoa = glm::vec3(1.0f, 0.55f, 0.15f) * parpadeoCanoa;
 
-        // --- C. Preparaci髇 del Framebuffer y Par醡etros Atmosf閞icos ---
+        // --- C. Preparaci贸n del Framebuffer y Par谩metros Atmosf茅ricos ---
         glm::vec3 fogColor = glm::vec3(0.02f, 0.02f, 0.05f); // Tono de la bruma nocturna
-        float fogDensity = 0.0f; // Densidad de niebla (0.0f para inspecci髇 clara)
+        float fogDensity = 0.0f; // Densidad de niebla (0.0f para inspecci贸n clara)
 
         glClearColor(fogColor.r, fogColor.g, fogColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -374,7 +651,7 @@ int main() {
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
 
-        // --- D. Shader Principal: Paso de Iluminaci髇, Niebla y C醡ara ---
+        // --- D. Shader Principal: Paso de Iluminaci贸n, Niebla y C谩mara ---
         miShader.use();
         glUniform3fv(glGetUniformLocation(miShader.ID, "viewPos"), 1, glm::value_ptr(cameraPos));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
@@ -399,7 +676,7 @@ int main() {
             glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.07f);
         }
 
-        // 3. Luz Puntual 4 (Luz Din醡ica dentro de la Canoa)
+        // 3. Luz Puntual 4 (Luz Din谩mica dentro de la Canoa)
         glUniform3fv(glGetUniformLocation(miShader.ID, "pointLights[4].position"), 1, glm::value_ptr(posLuzCanoa));
         glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[4].ambient"), colorLuzCanoa.r * 0.1f, colorLuzCanoa.g * 0.1f, colorLuzCanoa.b * 0.1f);
         glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[4].diffuse"), colorLuzCanoa.r, colorLuzCanoa.g, colorLuzCanoa.b);
