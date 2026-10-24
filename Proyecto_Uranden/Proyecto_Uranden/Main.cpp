@@ -3,21 +3,24 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <string>
-#include "Model.h"
+#include <vector>
 
-#include "SOIL2/SOIL2.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include "AudioEngine.h"
+#include "SOIL2/SOIL2.h"
 
 #include "Shader.h"
-#include <vector>
+#include "Model.h"
+#include "AudioEngine.h"
 
+// =========================================================================
+// 1. CONSTANTES Y CONFIGURACIÓN GLOBAL
+// =========================================================================
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
-// Variables de la Cámara en primera persona
+// Configuración de la Cámara
 glm::vec3 cameraPos = glm::vec3(0.0f, 1.5f, 4.0f);
 glm::vec3 cameraFront = glm::vec3(0.0f, -0.2f, -1.0f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -25,11 +28,133 @@ glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 bool firstMouse = true;
 float yaw = -90.0f;
 float pitch = -10.0f;
-float lastX = 800.0f / 2.0f;
-float lastY = 600.0f / 2.0f;
+float lastX = SCR_WIDTH / 2.0f;
+float lastY = SCR_HEIGHT / 2.0f;
 
+// Control de Cuadros y Tiempo
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
+double lastFpsTime = 0.0;
+int nbFrames = 0;
+
+// Constantes de Simulación
+const float VELOCIDAD_CIRCUITO = 0.035f;
+
+// =========================================================================
+// 2. DATOS DE ESCENA Y TRAYECTORIAS
+// =========================================================================
+
+// Desplazamiento global del muelle hacia la orilla derecha
+// Modifica el primer valor (X) para acercarlo o alejarlo de la orilla
+glm::vec3 offsetMuelle = glm::vec3(-3.5f, 0.0f, 0.0f);
+
+// Posiciones base relativas de las 4 veladoras en los postes del muelle
+const glm::vec3 pointLightOffsets[4] = {
+    glm::vec3(1.05f, -0.21f,  0.5f),  // Esquina frontal derecha
+    glm::vec3(-1.05f, -0.21f,  0.5f),  // Esquina frontal izquierda
+    glm::vec3(-1.05f, -0.21f, -0.5f),  // Lateral trasero izquierdo
+    glm::vec3(1.05f, -0.21f, -0.5f)   // Lateral trasero derecho
+};
+
+// Puntos de control adaptados al cauce del agua (Catmull-Rom)
+// Trayectoria cerrada: Izquierda = X negativa | Derecha = X positiva
+const std::vector<glm::vec3> puntosCircuito = {
+    // 1. Bajando por el carril izquierdo (X negativa, frente al muelle)
+    glm::vec3(-1.2f, -0.65f,  0.2f),   // Punto de salida (frente al muelle)
+    glm::vec3(-1.2f, -0.65f,  4.0f),   // Bajando por la izquierda (tramo alto)
+    glm::vec3(-1.3f, -0.65f,  8.5f),   // Bajando por la izquierda (tramo medio)
+    glm::vec3(-1.2f, -0.65f, 12.5f),   // Llegando al final del canal abajo
+
+    // 2. Curva en U en el fondo del lago (cruza de X negativa a X positiva)
+    glm::vec3(-0.5f, -0.65f, 14.5f),   // Entrada a la curva inferior
+    glm::vec3(0.6f, -0.65f, 14.5f),   // Salida de la curva hacia la derecha
+
+    // 3. Subiendo por el carril derecho (X positiva moderada para no pisar tierra)
+    glm::vec3(1.3f, -0.65f, 12.0f),   // Inicio del ascenso por la derecha
+    glm::vec3(1.5f, -0.65f,  8.0f),   // Canal derecho medio
+    glm::vec3(1.5f, -0.65f,  4.0f),   // Subiendo hacia la isla
+    glm::vec3(1.3f, -0.65f,  0.2f),   // Lado derecho a la altura del muelle
+
+    // 4. Retorno superior (cruza de derecha a izquierda frente a la isla)
+    glm::vec3(0.5f, -0.65f, -0.6f),   // Curva superior hacia el centro
+    glm::vec3(-0.6f, -0.65f, -0.5f)    // Reincorporación frente al muelle
+};
+
+// Geometría del Skybox
+const float skyboxVertices[] = {
+    -1.0f,  1.0f, -1.0f,  -1.0f, -1.0f, -1.0f,   1.0f, -1.0f, -1.0f,
+     1.0f, -1.0f, -1.0f,   1.0f,  1.0f, -1.0f,  -1.0f,  1.0f, -1.0f,
+    -1.0f, -1.0f,  1.0f,  -1.0f, -1.0f, -1.0f,  -1.0f,  1.0f, -1.0f,
+    -1.0f,  1.0f, -1.0f,  -1.0f,  1.0f,  1.0f,  -1.0f, -1.0f,  1.0f,
+     1.0f, -1.0f, -1.0f,   1.0f, -1.0f,  1.0f,   1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f,   1.0f,  1.0f, -1.0f,   1.0f, -1.0f, -1.0f,
+    -1.0f, -1.0f,  1.0f,  -1.0f,  1.0f,  1.0f,   1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f,   1.0f, -1.0f,  1.0f,  -1.0f, -1.0f,  1.0f,
+    -1.0f,  1.0f, -1.0f,   1.0f,  1.0f, -1.0f,   1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f,  -1.0f,  1.0f,  1.0f,  -1.0f,  1.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f,  -1.0f, -1.0f,  1.0f,   1.0f, -1.0f, -1.0f,
+     1.0f, -1.0f, -1.0f,  -1.0f, -1.0f,  1.0f,   1.0f, -1.0f,  1.0f
+};
+
+// =========================================================================
+// 3. FUNCIONES MATEMÁTICAS Y DE GENERACIÓN PROCEDURAL
+// =========================================================================
+
+glm::vec3 calcularCatmullRom(const glm::vec3& p0, const glm::vec3& p1,
+    const glm::vec3& p2, const glm::vec3& p3, float t)
+{
+    float t2 = t * t;
+    float t3 = t2 * t;
+    return 0.5f * ((2.0f * p1) +
+        (-p0 + p2) * t +
+        (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+        (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+}
+
+void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices, std::vector<unsigned int>& indices) {
+    float paso = tamano / (float)resolucion;
+    float mitad = tamano / 2.0f;
+
+    for (int i = 0; i <= resolucion; ++i) {
+        float z = -mitad + i * paso;
+        for (int j = 0; j <= resolucion; ++j) {
+            float x = -mitad + j * paso;
+
+            // Posición (X, Y, Z)
+            vertices.push_back(x);
+            vertices.push_back(0.0f);
+            vertices.push_back(z);
+
+            // Normal hacia arriba (X, Y, Z)
+            vertices.push_back(0.0f);
+            vertices.push_back(1.0f);
+            vertices.push_back(0.0f);
+
+            // Coordenadas UV (S, T)
+            vertices.push_back((float)j / (float)resolucion);
+            vertices.push_back((float)i / (float)resolucion);
+        }
+    }
+
+    for (int i = 0; i < resolucion; ++i) {
+        for (int j = 0; j < resolucion; ++j) {
+            int fila1 = i * (resolucion + 1);
+            int fila2 = (i + 1) * (resolucion + 1);
+
+            indices.push_back(fila1 + j);
+            indices.push_back(fila2 + j);
+            indices.push_back(fila1 + j + 1);
+
+            indices.push_back(fila1 + j + 1);
+            indices.push_back(fila2 + j);
+            indices.push_back(fila2 + j + 1);
+        }
+    }
+}
+
+// =========================================================================
+// 4. CALLBACKS Y CONTROL DE ENTRADA
+// =========================================================================
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
@@ -47,7 +172,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     lastX = (float)xpos;
     lastY = (float)ypos;
 
-    float sensitivity = 0.1f;
+    float sensitivity = 0.04f;
     xoffset *= sensitivity;
     yoffset *= sensitivity;
 
@@ -79,10 +204,6 @@ void processInput(GLFWwindow* window) {
         cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
 }
 
-// Cálculo de FPS
-double lastFpsTime = 0.0;
-int nbFrames = 0;
-
 void showFPS(GLFWwindow* window) {
     double currentTime = glfwGetTime();
     nbFrames++;
@@ -90,158 +211,17 @@ void showFPS(GLFWwindow* window) {
         double fps = double(nbFrames) / (currentTime - lastFpsTime);
         std::string title = "El Camino de las Animas | FPS: " + std::to_string((int)fps);
         glfwSetWindowTitle(window, title.c_str());
-
         nbFrames = 0;
         lastFpsTime = currentTime;
     }
 }
 
-// Vértices del cubo iluminado (Posiciones + Normales)
-float cubeVertices[] = {
-    // Posiciones          // Normales
-    -0.5f, -0.5f, -0.5f,   0.0f,  0.0f, -1.0f,
-     0.5f, -0.5f, -0.5f,   0.0f,  0.0f, -1.0f,
-     0.5f,  0.5f, -0.5f,   0.0f,  0.0f, -1.0f,
-     0.5f,  0.5f, -0.5f,   0.0f,  0.0f, -1.0f,
-    -0.5f,  0.5f, -0.5f,   0.0f,  0.0f, -1.0f,
-    -0.5f, -0.5f, -0.5f,   0.0f,  0.0f, -1.0f,
-
-    -0.5f, -0.5f,  0.5f,   0.0f,  0.0f,  1.0f,
-     0.5f, -0.5f,  0.5f,   0.0f,  0.0f,  1.0f,
-     0.5f,  0.5f,  0.5f,   0.0f,  0.0f,  1.0f,
-     0.5f,  0.5f,  0.5f,   0.0f,  0.0f,  1.0f,
-    -0.5f,  0.5f,  0.5f,   0.0f,  0.0f,  1.0f,
-    -0.5f, -0.5f,  0.5f,   0.0f,  0.0f,  1.0f,
-
-    -0.5f,  0.5f,  0.5f,  -1.0f,  0.0f,  0.0f,
-    -0.5f,  0.5f, -0.5f,  -1.0f,  0.0f,  0.0f,
-    -0.5f, -0.5f, -0.5f,  -1.0f,  0.0f,  0.0f,
-    -0.5f, -0.5f, -0.5f,  -1.0f,  0.0f,  0.0f,
-    -0.5f, -0.5f,  0.5f,  -1.0f,  0.0f,  0.0f,
-    -0.5f,  0.5f,  0.5f,  -1.0f,  0.0f,  0.0f,
-
-     0.5f,  0.5f,  0.5f,   1.0f,  0.0f,  0.0f,
-     0.5f,  0.5f, -0.5f,   1.0f,  0.0f,  0.0f,
-     0.5f, -0.5f, -0.5f,   1.0f,  0.0f,  0.0f,
-     0.5f, -0.5f, -0.5f,   1.0f,  0.0f,  0.0f,
-     0.5f, -0.5f,  0.5f,   1.0f,  0.0f,  0.0f,
-     0.5f,  0.5f,  0.5f,   1.0f,  0.0f,  0.0f,
-
-    -0.5f, -0.5f, -0.5f,   0.0f, -1.0f,  0.0f,
-     0.5f, -0.5f, -0.5f,   0.0f, -1.0f,  0.0f,
-     0.5f, -0.5f,  0.5f,   0.0f, -1.0f,  0.0f,
-     0.5f, -0.5f,  0.5f,   0.0f, -1.0f,  0.0f,
-    -0.5f, -0.5f,  0.5f,   0.0f, -1.0f,  0.0f,
-    -0.5f, -0.5f, -0.5f,   0.0f, -1.0f,  0.0f,
-
-    -0.5f,  0.5f, -0.5f,   0.0f,  1.0f,  0.0f,
-     0.5f,  0.5f, -0.5f,   0.0f,  1.0f,  0.0f,
-     0.5f,  0.5f,  0.5f,   0.0f,  1.0f,  0.0f,
-     0.5f,  0.5f,  0.5f,   0.0f,  1.0f,  0.0f,
-    -0.5f,  0.5f,  0.5f,   0.0f,  1.0f,  0.0f,
-    -0.5f,  0.5f, -0.5f,   0.0f,  1.0f,  0.0f
-};
-
-// Vértices del Skybox
-float skyboxVertices[] = {
-    -1.0f,  1.0f, -1.0f,
-    -1.0f, -1.0f, -1.0f,
-     1.0f, -1.0f, -1.0f,
-     1.0f, -1.0f, -1.0f,
-     1.0f,  1.0f, -1.0f,
-    -1.0f,  1.0f, -1.0f,
-
-    -1.0f, -1.0f,  1.0f,
-    -1.0f, -1.0f, -1.0f,
-    -1.0f,  1.0f, -1.0f,
-    -1.0f,  1.0f, -1.0f,
-    -1.0f,  1.0f,  1.0f,
-    -1.0f, -1.0f,  1.0f,
-
-     1.0f, -1.0f, -1.0f,
-     1.0f, -1.0f,  1.0f,
-     1.0f,  1.0f,  1.0f,
-     1.0f,  1.0f,  1.0f,
-     1.0f,  1.0f, -1.0f,
-     1.0f, -1.0f, -1.0f,
-
-    -1.0f, -1.0f,  1.0f,
-    -1.0f,  1.0f,  1.0f,
-     1.0f,  1.0f,  1.0f,
-     1.0f,  1.0f,  1.0f,
-     1.0f, -1.0f,  1.0f,
-    -1.0f, -1.0f,  1.0f,
-
-    -1.0f,  1.0f, -1.0f,
-     1.0f,  1.0f, -1.0f,
-     1.0f,  1.0f,  1.0f,
-     1.0f,  1.0f,  1.0f,
-    -1.0f,  1.0f,  1.0f,
-    -1.0f,  1.0f, -1.0f,
-
-    -1.0f, -1.0f, -1.0f,
-    -1.0f, -1.0f,  1.0f,
-     1.0f, -1.0f, -1.0f,
-     1.0f, -1.0f, -1.0f,
-    -1.0f, -1.0f,  1.0f,
-     1.0f, -1.0f,  1.0f
-};
-
-// Posiciones de las 4 luces puntuales (velas)
-glm::vec3 pointLightPositions[] = {
-    glm::vec3(1.5f, 0.0f,  1.2f),
-    glm::vec3(-1.5f, 0.0f,  1.0f),
-    glm::vec3(-1.2f, 0.0f, -1.2f),
-    glm::vec3(1.2f, 0.0f, -1.2f)
-};
-
-
-void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices, std::vector<unsigned int>& indices) {
-    float paso = tamano / (float)resolucion;
-    float mitad = tamano / 2.0f;
-
-    // 1. Generar vértices (Posición X, Y, Z | Normal X, Y, Z | UV S, T)
-    for (int i = 0; i <= resolucion; ++i) {
-        float z = -mitad + i * paso;
-        for (int j = 0; j <= resolucion; ++j) {
-            float x = -mitad + j * paso;
-
-            // Posición
-            vertices.push_back(x);
-            vertices.push_back(0.0f); // Altura inicial plana
-            vertices.push_back(z);
-
-            // Normal inicial hacia arriba
-            vertices.push_back(0.0f);
-            vertices.push_back(1.0f);
-            vertices.push_back(0.0f);
-
-            // Coordenadas UV
-            vertices.push_back((float)j / (float)resolucion);
-            vertices.push_back((float)i / (float)resolucion);
-        }
-    }
-
-    // 2. Generar índices de triángulos
-    for (int i = 0; i < resolucion; ++i) {
-        for (int j = 0; j < resolucion; ++j) {
-            int fila1 = i * (resolucion + 1);
-            int fila2 = (i + 1) * (resolucion + 1);
-
-            // Primer triángulo
-            indices.push_back(fila1 + j);
-            indices.push_back(fila2 + j);
-            indices.push_back(fila1 + j + 1);
-
-            // Segundo triángulo
-            indices.push_back(fila1 + j + 1);
-            indices.push_back(fila2 + j);
-            indices.push_back(fila2 + j + 1);
-        }
-    }
-}
+// =========================================================================
+// 5. FUNCIÓN PRINCIPAL
+// =========================================================================
 
 int main() {
+    // --- Inicialización GLFW & OpenGL Context ---
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -249,50 +229,37 @@ int main() {
 
     GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "El Camino de las Animas", NULL, NULL);
     if (window == NULL) {
-        std::cout << "Fallo al crear la ventana GLFW" << std::endl;
+        std::cerr << "ERROR::GLFW::Fallo al crear la ventana" << std::endl;
         glfwTerminate();
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1); // Sincronización vertical
+    glfwSwapInterval(1); // V-Sync activo
+
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK) {
-        std::cout << "Fallo al inicializar GLEW" << std::endl;
+        std::cerr << "ERROR::GLEW::Fallo al inicializar GLEW" << std::endl;
         return -1;
     }
 
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    glfwSetCursorPosCallback(window, mouse_callback);
-
     glEnable(GL_DEPTH_TEST);
 
+    // --- Shaders ---
     Shader miShader("shader/shader.vert", "shader/shader.frag");
     Shader skyboxShader("shader/skybox.vert", "shader/skybox.frag");
+    Shader waterShader("shader/water.vert", "shader/water.frag");
 
-    // VAO/VBO para cubos y plataforma
-    unsigned int cubeVAO, cubeVBO;
-    glGenVertexArrays(1, &cubeVAO);
-    glGenBuffers(1, &cubeVBO);
-    glBindVertexArray(cubeVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    glBindVertexArray(0);
-
-    // VAO/VBO Skybox
+    // --- Buffers: Skybox ---
     unsigned int skyboxVAO, skyboxVBO;
     glGenVertexArrays(1, &skyboxVAO);
     glGenBuffers(1, &skyboxVBO);
     glBindVertexArray(skyboxVAO);
     glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
-
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     glBindVertexArray(0);
@@ -304,13 +271,14 @@ int main() {
         SOIL_LOAD_RGB, SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS
     );
 
-    // -------------------------------------------------------------
-    // VAO / VBO / EBO para la malla de agua
-    // -------------------------------------------------------------
+    skyboxShader.use();
+    glUniform1i(glGetUniformLocation(skyboxShader.ID, "skybox"), 0);
+
+    // --- Buffers: Superficie del Agua ---
     std::vector<float> waterVertices;
     std::vector<unsigned int> waterIndices;
-    int waterResolution = 100;   // Mayor densidad de vértices para olas más definidas
-    float waterSize = 100.0f;    // Tamaño amplio (100x100) para cubrir todo el horizonte visible
+    int waterResolution = 100;
+    float waterSize = 100.0f;
     generarPlanoAgua(waterResolution, waterSize, waterVertices, waterIndices);
 
     unsigned int waterVAO, waterVBO, waterEBO;
@@ -319,81 +287,110 @@ int main() {
     glGenBuffers(1, &waterEBO);
 
     glBindVertexArray(waterVAO);
-
     glBindBuffer(GL_ARRAY_BUFFER, waterVBO);
     glBufferData(GL_ARRAY_BUFFER, waterVertices.size() * sizeof(float), waterVertices.data(), GL_STATIC_DRAW);
-
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterEBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, waterIndices.size() * sizeof(unsigned int), waterIndices.data(), GL_STATIC_DRAW);
 
-    // Posición (X, Y, Z)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-    // Normal (X, Y, Z)
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
-    // UVs (S, T)
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
-
     glBindVertexArray(0);
 
-    // Cargar el shader del agua
-    Shader waterShader("shader/water.vert", "shader/water.frag");
+    // --- Carga de Modelos 3D ---
+    Model modeloMuelle("Models/Meshy_AI_Weathered_Wooden_Dock_1018053025_texture.obj");
+    Model modeloVela("Models/Meshy_AI_Marigold_Candle_Glow_1018054806_texture.obj");
+    Model modeloCanoa("Models/canoa.obj");
+    Model modeloTerreno("Models/Terreno.obj");
 
-    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-
-    skyboxShader.use();
-    glUniform1i(glGetUniformLocation(skyboxShader.ID, "skybox"), 0);
-
-    // Carga del modelo 3D
-    Model modeloPrueba("Models/RedDog.obj");
-
-    // -------------------------------------------------------------
-    // Sistema de Audio (miniaudio)
-    // -------------------------------------------------------------
+    // --- Motor de Audio ---
     AudioEngine audioEngine;
     if (!audioEngine.init()) {
-        std::cout << "ERROR::MINIAUDIO::No se pudo inicializar el motor de audio" << std::endl;
+        std::cerr << "ERROR::MINIAUDIO::No se pudo inicializar el motor de audio" << std::endl;
     }
-
-    // Reproducción en bucle de música y ambiente
     audioEngine.playMusic("audio/Ofrenda_en_el_Agua.mp3", 0.35f, true);
     audioEngine.playAmbient("audio/ambiente.mp3", 0.25f, true);
 
+    // =====================================================================
+    // 6. BUCLE PRINCIPAL DE RENDERIZADO
+    // =====================================================================
     while (!glfwWindowShouldClose(window)) {
+        // --- A. Tiempo y Procesamiento de Entradas ---
         float currentFrame = (float)glfwGetTime();
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
         processInput(window);
 
-        glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
+        // --- B. Actualización de Cinemática y Animación (Update) ---
+        float tiempoAnim = currentFrame;
+
+        // Dinámica de remadas
+        float cicloRemo = std::fmod(tiempoAnim, 2.2f) / 2.2f;
+        float impulsoRemo = std::pow(std::sin(cicloRemo * 3.14159f), 0.7f) * 0.4f;
+        float avanceGlobal = (tiempoAnim * VELOCIDAD_CIRCUITO) + (impulsoRemo * 0.015f);
+
+        // Muestreo de Catmull-Rom para la canoa
+        int numPuntos = puntosCircuito.size();
+        float progreso = std::fmod(avanceGlobal, 1.0f) * numPuntos;
+        int i1 = (int)progreso;
+        float t = progreso - i1;
+
+        int i0 = (i1 - 1 + numPuntos) % numPuntos;
+        int i2 = (i1 + 1) % numPuntos;
+        int i3 = (i1 + 2) % numPuntos;
+
+        glm::vec3 posActual = calcularCatmullRom(puntosCircuito[i0], puntosCircuito[i1],
+            puntosCircuito[i2], puntosCircuito[i3], t);
+
+        // Vector tangente y orientación hacia el avance
+        float deltaT = 0.01f;
+        glm::vec3 posFutura = calcularCatmullRom(puntosCircuito[i0], puntosCircuito[i1],
+            puntosCircuito[i2], puntosCircuito[i3], t + deltaT);
+        glm::vec3 direccionAvance = glm::normalize(posFutura - posActual);
+        float anguloRumbo = glm::degrees(std::atan2(direccionAvance.x, direccionAvance.z));
+
+        // Oscilaciones por física de agua (más suaves)
+        float bamboleoRoll = std::sin(cicloRemo * 6.28318f) * 1.5f;  // Antes 2.8f
+        float cabeceoPitch = std::cos(cicloRemo * 6.28318f) * 0.8f;  // Antes 1.5f
+        float flotacionOlas = std::sin(tiempoAnim * 1.0f) * 0.01f;   // Antes * 2.5f y * 0.02f
+        posActual.y += flotacionOlas;
+
+        // Posición y parpadeo de la luz puntual dinámica (Canoa)
+        glm::vec3 posLuzCanoa = posActual + glm::vec3(0.0f, 0.18f, 0.0f);
+        float parpadeoCanoa = 0.85f + 0.15f * std::sin(tiempoAnim * 14.0f + 2.5f);
+        glm::vec3 colorLuzCanoa = glm::vec3(1.0f, 0.55f, 0.15f) * parpadeoCanoa;
+
+        // --- C. Preparación del Framebuffer y Parámetros Atmosféricos ---
+        glm::vec3 fogColor = glm::vec3(0.02f, 0.02f, 0.05f); // Tono de la bruma nocturna
+        float fogDensity = 0.0f; // Densidad de niebla (0.0f para inspección clara)
+
+        glClearColor(fogColor.r, fogColor.g, fogColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
 
+        // --- D. Shader Principal: Paso de Iluminación, Niebla y Cámara ---
         miShader.use();
         glUniform3fv(glGetUniformLocation(miShader.ID, "viewPos"), 1, glm::value_ptr(cameraPos));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-        // 1. Luz Direccional (Luna)
+        // 1. Luz Direccional
         glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.direction"), -0.2f, -1.0f, -0.3f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.ambient"), 0.05f, 0.05f, 0.08f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.diffuse"), 0.15f, 0.20f, 0.28f);
+        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.ambient"), 0.7f, 0.7f, 0.7f);
+        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.diffuse"), 0.8f, 0.8f, 0.8f);
         glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.specular"), 0.20f, 0.20f, 0.25f);
 
-        // 2. Luces Puntuales (Velas) - Intensidad equilibrada
+        // 2. Luces Puntuales 0 a 3 (Veladoras fijas del Muelle, sincronizadas con offsetMuelle)
         for (unsigned int i = 0; i < 4; i++) {
             std::string base = "pointLights[" + std::to_string(i) + "].";
-            glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(pointLightPositions[i]));
+            glm::vec3 posLuzReal = pointLightOffsets[i] + offsetMuelle;
+            glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(posLuzReal));
             glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.02f, 0.01f, 0.00f);
             glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 0.60f, 0.30f, 0.08f);
             glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.50f, 0.30f, 0.10f);
@@ -402,77 +399,95 @@ int main() {
             glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.07f);
         }
 
-        // 3. Reflector de la ribera (Spotlight) - Foco cenital blanco
-        glm::vec3 spotLightPos = glm::vec3(0.0f, 3.5f, 1.0f);
-        glm::vec3 spotLightDir = glm::normalize(glm::vec3(0.0f, -1.0f, -0.3f)); // Apuntando al centro
+        // 3. Luz Puntual 4 (Luz Dinámica dentro de la Canoa)
+        glUniform3fv(glGetUniformLocation(miShader.ID, "pointLights[4].position"), 1, glm::value_ptr(posLuzCanoa));
+        glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[4].ambient"), colorLuzCanoa.r * 0.1f, colorLuzCanoa.g * 0.1f, colorLuzCanoa.b * 0.1f);
+        glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[4].diffuse"), colorLuzCanoa.r, colorLuzCanoa.g, colorLuzCanoa.b);
+        glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[4].specular"), colorLuzCanoa.r, colorLuzCanoa.g, colorLuzCanoa.b);
+        glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[4].constant"), 1.0f);
+        glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[4].linear"), 0.14f);
+        glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[4].quadratic"), 0.07f);
 
+        // 4. Reflector Cenital (Spotlight)
+        glm::vec3 spotLightPos = glm::vec3(0.0f, 3.5f, 1.0f);
+        glm::vec3 spotLightDir = glm::normalize(glm::vec3(0.0f, -1.0f, -0.3f));
         glUniform3fv(glGetUniformLocation(miShader.ID, "spotLight.position"), 1, glm::value_ptr(spotLightPos));
         glUniform3fv(glGetUniformLocation(miShader.ID, "spotLight.direction"), 1, glm::value_ptr(spotLightDir));
         glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.cutOff"), glm::cos(glm::radians(18.0f)));
         glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.outerCutOff"), glm::cos(glm::radians(24.0f)));
-
         glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.ambient"), 0.0f, 0.0f, 0.0f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.diffuse"), 1.8f, 1.8f, 1.9f); // Blanco frío contrastante
+        glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.diffuse"), 1.8f, 1.8f, 1.9f);
         glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.specular"), 1.0f, 1.0f, 1.0f);
         glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.constant"), 1.0f);
         glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.linear"), 0.07f);
         glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.quadratic"), 0.017f);
 
-        // A. Dibujar el modelo 3D (activar muestreo de textura)
+        // 5. Niebla en Modelos Opacos
+        glUniform3fv(glGetUniformLocation(miShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
+        glUniform1f(glGetUniformLocation(miShader.ID, "fogDensity"), fogDensity);
+
+        // --- E. Renderizado de Mallas 3D Opacas ---
         glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), true);
+        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
 
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, glm::vec3(0.0f, -0.2f, 0.0f));
-        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(model));
-        modeloPrueba.Draw(miShader);
+        // 1. Muelle (Desplazado con offsetMuelle)
+        glm::mat4 dockModel = glm::mat4(1.0f);
+        dockModel = glm::translate(dockModel, glm::vec3(0.0f, -0.75f, 0.0f) + offsetMuelle);
+        dockModel = glm::scale(dockModel, glm::vec3(2.5f));
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(dockModel));
+        modeloMuelle.Draw(miShader);
 
-        // B. Dibujar objetos sólidos (desactivar textura y usar color base)
-        glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), false);
-        glBindVertexArray(cubeVAO);
-
-        // Suelo / Muelle (madera oscura y con profundidad hacia el fondo del agua)
-        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 0.35f, 0.22f, 0.14f);
-        glm::mat4 floorModel = glm::mat4(1.0f);
-        floorModel = glm::translate(floorModel, glm::vec3(0.0f, -0.75f, 0.0f));
-        floorModel = glm::scale(floorModel, glm::vec3(8.0f, 0.5f, 8.0f)); // Grosor de 0.5 unidades
-        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(floorModel));
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-
-        // Indicadores de las velas (color naranja brillante y tamaño visible a distancia)
-        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 0.5f, 0.1f);
+        // 2. Veladoras fijas en los postes (Sincronizadas con offsetMuelle)
         for (unsigned int i = 0; i < 4; i++) {
-            glm::mat4 lightModel = glm::mat4(1.0f);
-            lightModel = glm::translate(lightModel, pointLightPositions[i]);
-            lightModel = glm::scale(lightModel, glm::vec3(0.22f)); // Escala aumentada
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(lightModel));
-            glDrawArrays(GL_TRIANGLES, 0, 36);
+            glm::mat4 candleModel = glm::mat4(1.0f);
+            candleModel = glm::translate(candleModel, pointLightOffsets[i] + offsetMuelle);
+            candleModel = glm::scale(candleModel, glm::vec3(0.20f));
+            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(candleModel));
+            modeloVela.Draw(miShader);
         }
-        glBindVertexArray(0);
-        
-        // D. Dibujar Agua Deformable
-        waterShader.use();
 
-        // Enviar matrices view y projection
+        // 3. Canoa Animada (Recorre la nueva trayectoria adaptada al canal)
+        glm::mat4 canoaModel = glm::mat4(1.0f);
+        canoaModel = glm::translate(canoaModel, posActual);
+        canoaModel = glm::rotate(canoaModel, glm::radians(anguloRumbo), glm::vec3(0.0f, 1.0f, 0.0f));
+        canoaModel = glm::rotate(canoaModel, glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        canoaModel = glm::rotate(canoaModel, glm::radians(bamboleoRoll), glm::vec3(0.0f, 0.0f, 1.0f));
+        canoaModel = glm::rotate(canoaModel, glm::radians(cabeceoPitch), glm::vec3(1.0f, 0.0f, 0.0f));
+        canoaModel = glm::scale(canoaModel, glm::vec3(2.0f));
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(canoaModel));
+        modeloCanoa.Draw(miShader);
+
+        // 4. Terreno
+        glm::mat4 terrainModel = glm::mat4(1.0f);
+        terrainModel = glm::translate(terrainModel, glm::vec3(0.0f, -0.2f, 0.0f));
+        terrainModel = glm::scale(terrainModel, glm::vec3(0.2f));
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(terrainModel));
+        modeloTerreno.Draw(miShader);
+
+        // --- F. Renderizado de la Superficie del Agua ---
+        waterShader.use();
         glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
         glUniform3fv(glGetUniformLocation(waterShader.ID, "viewPos"), 1, glm::value_ptr(cameraPos));
         glUniform3f(glGetUniformLocation(waterShader.ID, "dirLightDir"), -0.2f, -1.0f, -0.3f);
-        glUniform1f(glGetUniformLocation(waterShader.ID, "time"), (float)glfwGetTime());
 
-        // Colocar el agua a ras delf muelle
-        // Matriz de modelo para el agua (bajamos la base para que las olas no inunden el muelle)
+        // Multiplicamos currentFrame por 0.25f para que las olas se muevan a 1/4 de su velocidad
+        glUniform1f(glGetUniformLocation(waterShader.ID, "time"), currentFrame * 0.25f);
+
+        // Niebla sobre el agua
+        glUniform3fv(glGetUniformLocation(waterShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
+        glUniform1f(glGetUniformLocation(waterShader.ID, "fogDensity"), fogDensity);
+
         glm::mat4 waterModel = glm::mat4(1.0f);
         waterModel = glm::translate(waterModel, glm::vec3(0.0f, -0.75f, 0.0f));
         glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(waterModel));
 
-        glDisable(GL_CULL_FACE); // Evita que se descarte la superficie si la cámara la ve desde abajo o de lado
+        glDisable(GL_CULL_FACE);
         glBindVertexArray(waterVAO);
         glDrawElements(GL_TRIANGLES, (GLsizei)waterIndices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
-      
 
-        // C. Dibujar Skybox
+        // --- G. Renderizado del Skybox ---
         glDepthFunc(GL_LEQUAL);
         skyboxShader.use();
         glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
@@ -486,20 +501,22 @@ int main() {
         glBindVertexArray(0);
         glDepthFunc(GL_LESS);
 
+        // --- H. Intercambio de Buffers y Eventos ---
         glfwSwapBuffers(window);
         glfwPollEvents();
         showFPS(window);
     }
 
-    glDeleteVertexArrays(1, &cubeVAO);
-    glDeleteBuffers(1, &cubeVBO);
+    // =====================================================================
+    // 7. LIMPIEZA DE RECURSOS
+    // =====================================================================
     glDeleteVertexArrays(1, &skyboxVAO);
     glDeleteBuffers(1, &skyboxVBO);
     glDeleteVertexArrays(1, &waterVAO);
     glDeleteBuffers(1, &waterVBO);
     glDeleteBuffers(1, &waterEBO);
-    audioEngine.cleanup();
 
+    audioEngine.cleanup();
     glfwTerminate();
     return 0;
 }

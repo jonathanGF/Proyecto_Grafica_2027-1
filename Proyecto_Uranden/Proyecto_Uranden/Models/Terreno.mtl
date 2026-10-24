@@ -1,0 +1,14 @@
+# Blender 5.2.2 LTS MTL File: 'ArchivoConTexturas2.blend'
+# www.blender.org
+
+newmtl Terreno
+Ns 22.499992
+Ka 1.000000 1.000000 1.000000
+Kd 0.215861 0.174648 0.114435
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+
+map_Kd pasto.png
