@@ -13,6 +13,7 @@
 #include "Shader.h"
 #include "Model.h"
 #include "AudioEngine.h"
+#include "Camera.h"
 
 // =========================================================================
 // 1. CONSTANTES Y CONFIGURACIÓN GLOBAL
@@ -21,13 +22,9 @@ const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
 // Configuración de la Cámara
-glm::vec3 cameraPos = glm::vec3(0.0f, 1.5f, 4.0f);
-glm::vec3 cameraFront = glm::vec3(0.0f, -0.2f, -1.0f);
-glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+Camera camera(glm::vec3(0.0f, 1.5f, 4.0f));
 
 bool firstMouse = true;
-float yaw = -90.0f;
-float pitch = -10.0f;
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 
@@ -96,9 +93,83 @@ const float skyboxVertices[] = {
      1.0f, -1.0f, -1.0f,  -1.0f, -1.0f,  1.0f,   1.0f, -1.0f,  1.0f
 };
 
+// Estructura para las zonas de interacción
+struct Estacion {
+    glm::vec3 posicion;
+    float radioDeteccion;
+    bool interactuable;
+    bool activa;
+};
+
+// Definición de las 4 estaciones
+// Nota: Las coordenadas son temporales. Debes ajustarlas a la posición real de cada zona en tu mapa.
+std::vector<Estacion> estaciones = {
+    {glm::vec3(-3.5f, 0.0f, 0.0f), 3.0f, false, false},  // 1. Embarcadero
+    {glm::vec3(-5.0f, 0.0f, 4.0f), 3.0f, false, false},  // 2. Parador
+    {glm::vec3(0.0f, 0.0f, 6.0f),  3.0f, false, false},  // 3. Puente
+    {glm::vec3(2.0f, 0.0f, 10.0f), 3.0f, false, false}   // 4. Islote
+};
+
+// Variable para controlar qué estación se está mostrando en el HUD (-1 significa ninguna)
+int estacionActivaHUD = -1;
+bool eKeyPressed = false;
+
 // =========================================================================
 // 3. FUNCIONES MATEMÁTICAS Y DE GENERACIÓN PROCEDURAL
 // =========================================================================
+
+float obtenerAlturaTerreno(Model& modelo, float x, float z) {
+    // Reproducimos la misma transformación que tiene el terreno en el bucle principal
+    glm::mat4 modelMat = glm::mat4(1.0f);
+    modelMat = glm::translate(modelMat, glm::vec3(0.0f, -0.2f, 0.0f));
+    modelMat = glm::scale(modelMat, glm::vec3(0.2f));
+
+    glm::vec2 pos2D(x, z);
+
+    for (unsigned int i = 0; i < modelo.meshes.size(); i++) {
+        for (size_t j = 0; j < modelo.meshes[i].indices.size(); j += 3) {
+
+            // Obtener vértices originales (asume que 'vertices' e 'indices' son públicos en tu clase Mesh)
+            glm::vec3 v0 = modelo.meshes[i].vertices[modelo.meshes[i].indices[j]].Position;
+            glm::vec3 v1 = modelo.meshes[i].vertices[modelo.meshes[i].indices[j + 1]].Position;
+            glm::vec3 v2 = modelo.meshes[i].vertices[modelo.meshes[i].indices[j + 2]].Position;
+
+            // Pasamos los vértices a coordenadas de mundo
+            v0 = glm::vec3(modelMat * glm::vec4(v0, 1.0f));
+            v1 = glm::vec3(modelMat * glm::vec4(v1, 1.0f));
+            v2 = glm::vec3(modelMat * glm::vec4(v2, 1.0f));
+
+            // Coordenadas baricéntricas para evaluar si (X, Z) está dentro del triángulo
+            float det = (v1.z - v2.z) * (v0.x - v2.x) + (v2.x - v1.x) * (v0.z - v2.z);
+            if (det == 0.0f) continue;
+
+            float l1 = ((v1.z - v2.z) * (pos2D.x - v2.x) + (v2.x - v1.x) * (pos2D.y - v2.z)) / det;
+            float l2 = ((v2.z - v0.z) * (pos2D.x - v2.x) + (v0.x - v2.x) * (pos2D.y - v2.z)) / det;
+            float l3 = 1.0f - l1 - l2;
+
+            // Si los 3 pesos son positivos, el punto está dentro del triángulo
+            if (l1 >= 0.0f && l2 >= 0.0f && l3 >= 0.0f) {
+                return l1 * v0.y + l2 * v1.y + l3 * v2.y;
+            }
+        }
+    }
+    // Retorno de seguridad si sales del mapa
+    return 0.0f;
+}
+
+float barryCentric(glm::vec3 p1, glm::vec3 p2, glm::vec3 p3, glm::vec2 pos) {
+    float det = (p2.z - p3.z) * (p1.x - p3.x) + (p3.x - p2.x) * (p1.z - p3.z);
+
+    // Evitar división por cero si el triángulo está degenerado
+    if (det == 0.0f) return 0.0f;
+
+    float l1 = ((p2.z - p3.z) * (pos.x - p3.x) + (p3.x - p2.x) * (pos.y - p3.z)) / det;
+    float l2 = ((p3.z - p1.z) * (pos.x - p3.x) + (p1.x - p3.x) * (pos.y - p3.z)) / det;
+    float l3 = 1.0f - l1 - l2;
+
+    // Retorna la altura interpolada en el eje Y
+    return l1 * p1.y + l2 * p2.y + l3 * p3.y;
+}
 
 glm::vec3 calcularCatmullRom(const glm::vec3& p0, const glm::vec3& p1,
     const glm::vec3& p2, const glm::vec3& p3, float t)
@@ -160,48 +231,62 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
 
-void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
+void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
+    float xpos = static_cast<float>(xposIn);
+    float ypos = static_cast<float>(yposIn);
+
     if (firstMouse) {
-        lastX = (float)xpos;
-        lastY = (float)ypos;
+        lastX = xpos;
+        lastY = ypos;
         firstMouse = false;
     }
 
-    float xoffset = (float)xpos - lastX;
-    float yoffset = lastY - (float)ypos;
-    lastX = (float)xpos;
-    lastY = (float)ypos;
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos;
+    lastX = xpos;
+    lastY = ypos;
 
-    float sensitivity = 0.04f;
-    xoffset *= sensitivity;
-    yoffset *= sensitivity;
-
-    yaw += xoffset;
-    pitch += yoffset;
-
-    if (pitch > 89.0f)  pitch = 89.0f;
-    if (pitch < -89.0f) pitch = -89.0f;
-
-    glm::vec3 front;
-    front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
-    front.y = sin(glm::radians(pitch));
-    front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-    cameraFront = glm::normalize(front);
+    camera.ProcessMouseMovement(xoffset, yoffset);
 }
 
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
-    float cameraSpeed = 2.5f * deltaTime;
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        cameraPos += cameraSpeed * cameraFront;
+        camera.ProcessKeyboard(FORWARD, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        cameraPos -= cameraSpeed * cameraFront;
+        camera.ProcessKeyboard(BACKWARD, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+        camera.ProcessKeyboard(LEFT, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+        camera.ProcessKeyboard(RIGHT, deltaTime);
+
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+        if (!eKeyPressed) {
+            eKeyPressed = true;
+            for (int i = 0; i < estaciones.size(); i++) {
+                if (estaciones[i].interactuable) {
+                    // Alternar el estado del HUD
+                    if (estacionActivaHUD == i) {
+                        estacionActivaHUD = -1; // Cerrar la cédula
+                        std::cout << "HUD cerrado." << std::endl;
+                    }
+                    else {
+                        estacionActivaHUD = i; // Mostrar la cédula
+                        std::cout << "Mostrando HUD para Estacion " << i + 1 << std::endl;
+
+                        // Espacio reservado para detonar animaciones (A1, A2, A3, A5)
+                        // if (i == 0) IniciarDesfileCanoasA2();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    else {
+        eKeyPressed = false;
+    }
 }
 
 void showFPS(GLFWwindow* window) {
@@ -314,6 +399,42 @@ int main() {
     audioEngine.playMusic("audio/Ofrenda_en_el_Agua.mp3", 0.35f, true);
     audioEngine.playAmbient("audio/ambiente.mp3", 0.25f, true);
 
+    // Compilar el shader del HUD
+    Shader hudShader("shader/hud.vs", "shader/hud.fs");
+
+    // Configurar VAO/VBO para un Quad 2D unitario (x, y, u, v)
+    unsigned int hudVAO, hudVBO;
+    float hudVertices[] = {
+        // Posición (X, Y)  // Textura (U, V)
+         0.0f,  1.0f,       0.0f, 1.0f,
+         1.0f,  0.0f,       1.0f, 0.0f,
+         0.0f,  0.0f,       0.0f, 0.0f,
+         0.0f,  1.0f,       0.0f, 1.0f,
+         1.0f,  1.0f,       1.0f, 1.0f,
+         1.0f,  0.0f,       1.0f, 0.0f
+    };
+    glGenVertexArrays(1, &hudVAO);
+    glGenBuffers(1, &hudVBO);
+    glBindVertexArray(hudVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, hudVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(hudVertices), hudVertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glBindVertexArray(0);
+
+    // Cargar las texturas forzando RGBA para leer la transparencia
+    unsigned int texCedula1 = SOIL_load_OGL_texture("Models/textures/1_Las-copaleras-y-el-rito-de-purificacion.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
+    unsigned int texCedula2 = SOIL_load_OGL_texture("Models/textures/2_Danzas-y-cocina-tradicional.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
+    unsigned int texCedula3 = SOIL_load_OGL_texture("Models/textures/3_Procesion-de-Canoas.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
+    unsigned int texCedula4 = SOIL_load_OGL_texture("Models/textures/4_El-rescate-de-los-manantiales.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
+
+    // Parámetros básicos para que la textura no se vea borrosa ni se repita
+    glBindTexture(GL_TEXTURE_2D, texCedula1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // Repite esto para texCedula2, texCedula3 y texCedula4...
+    
+
     // =====================================================================
     // 6. BUCLE PRINCIPAL DE RENDERIZADO
     // =====================================================================
@@ -324,6 +445,22 @@ int main() {
         lastFrame = currentFrame;
 
         processInput(window);
+
+        // Detección de proximidad a las estaciones
+        for (int i = 0; i < estaciones.size(); i++) {
+            float distancia = glm::distance(glm::vec2(camera.Position.x, camera.Position.z),
+                glm::vec2(estaciones[i].posicion.x, estaciones[i].posicion.z));
+
+            if (distancia <= estaciones[i].radioDeteccion) {
+                if (!estaciones[i].interactuable) {
+                    estaciones[i].interactuable = true;
+                    std::cout << "Zona alcanzada: Estacion " << i + 1 << ". Presiona E." << std::endl;
+                }
+            }
+            else {
+                estaciones[i].interactuable = false;
+            }
+        }
 
         // --- B. Actualización de Cinemática y Animación (Update) ---
         float tiempoAnim = currentFrame;
@@ -354,9 +491,9 @@ int main() {
         float anguloRumbo = glm::degrees(std::atan2(direccionAvance.x, direccionAvance.z));
 
         // Oscilaciones por física de agua (más suaves)
-        float bamboleoRoll = std::sin(cicloRemo * 6.28318f) * 1.5f;  // Antes 2.8f
-        float cabeceoPitch = std::cos(cicloRemo * 6.28318f) * 0.8f;  // Antes 1.5f
-        float flotacionOlas = std::sin(tiempoAnim * 1.0f) * 0.01f;   // Antes * 2.5f y * 0.02f
+        float bamboleoRoll = std::sin(cicloRemo * 6.28318f) * 1.5f;
+        float cabeceoPitch = std::cos(cicloRemo * 6.28318f) * 0.8f;
+        float flotacionOlas = std::sin(tiempoAnim * 1.0f) * 0.01f;
         posActual.y += flotacionOlas;
 
         // Posición y parpadeo de la luz puntual dinámica (Canoa)
@@ -372,11 +509,11 @@ int main() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+        glm::mat4 view = camera.GetViewMatrix();
 
         // --- D. Shader Principal: Paso de Iluminación, Niebla y Cámara ---
         miShader.use();
-        glUniform3fv(glGetUniformLocation(miShader.ID, "viewPos"), 1, glm::value_ptr(cameraPos));
+        glUniform3fv(glGetUniformLocation(miShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
@@ -468,7 +605,7 @@ int main() {
         waterShader.use();
         glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-        glUniform3fv(glGetUniformLocation(waterShader.ID, "viewPos"), 1, glm::value_ptr(cameraPos));
+        glUniform3fv(glGetUniformLocation(waterShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
         glUniform3f(glGetUniformLocation(waterShader.ID, "dirLightDir"), -0.2f, -1.0f, -0.3f);
 
         // Multiplicamos currentFrame por 0.25f para que las olas se muevan a 1/4 de su velocidad
@@ -501,6 +638,61 @@ int main() {
         glBindVertexArray(0);
         glDepthFunc(GL_LESS);
 
+
+        // Renderizado del HUD (Interfaz 2D)
+        if (estacionActivaHUD != -1) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDisable(GL_DEPTH_TEST); // El HUD siempre dibuja al frente
+
+            hudShader.use();
+            glUniform1i(glGetUniformLocation(hudShader.ID, "hudTexture"), 0);
+            // Proyección ortográfica (Ajusta los valores al ancho y alto real de tu ventana, ej. 800x600)
+            glm::mat4 projection = glm::ortho(0.0f, 800.0f, 0.0f, 600.0f);
+            hudShader.setMat4("projection", projection);
+
+            // Posición y tamaño de la cédula en pantalla
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, glm::vec3(80.0f, 120.0f, 0.0f)); // Posición centrada (X, Y)
+            model = glm::scale(model, glm::vec3(640.0f, 360.0f, 1.0f));    // Tamaño ampliado (Ancho, Alto)
+            hudShader.setMat4("model", model);
+
+            // Vincular la textura correcta dependiendo de estacionActivaHUD (0 a 3)
+            glActiveTexture(GL_TEXTURE0);
+            // Justo antes de glBindVertexArray(hudVAO);
+            glActiveTexture(GL_TEXTURE0);
+            if (estacionActivaHUD == 0) {
+                glBindTexture(GL_TEXTURE_2D, texCedula1);
+                if (texCedula1 == 0) {
+                    std::cout << "ERROR: SOIL no encuentra la imagen 1_Las-copaleras-y-el-rito-de-purificacion.png" << std::endl;
+                }
+            }
+            else if (estacionActivaHUD == 1) {
+                glBindTexture(GL_TEXTURE_2D, texCedula2);
+                if (texCedula2 == 0) {
+                    std::cout << "ERROR: SOIL no encuentra la imagen 2_Danzas-y-cocina-tradicional.png" << std::endl;
+                }
+            }
+            else if (estacionActivaHUD == 2) {
+                glBindTexture(GL_TEXTURE_2D, texCedula3);
+                if (texCedula3 == 0) {
+                    std::cout << "ERROR: SOIL no encuentra la imagen 3_Procesion-de-Canoas.png" << std::endl;
+                }
+            }
+            else if (estacionActivaHUD == 3) {
+                glBindTexture(GL_TEXTURE_2D, texCedula4);
+                if (texCedula4 == 0) {
+                    std::cout << "ERROR: SOIL no encuentra la imagen 4_El-rescate-de-los-manantiales.png" << std::endl;
+                }   
+            }
+
+            glBindVertexArray(hudVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glBindVertexArray(0);
+
+            glEnable(GL_DEPTH_TEST); // Reactivar para el siguiente fotograma 3D
+            glDisable(GL_BLEND);
+        }
         // --- H. Intercambio de Buffers y Eventos ---
         glfwSwapBuffers(window);
         glfwPollEvents();
