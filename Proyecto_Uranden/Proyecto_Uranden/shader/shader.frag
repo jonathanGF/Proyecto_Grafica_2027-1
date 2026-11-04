@@ -4,6 +4,7 @@ out vec4 FragColor;
 in vec3 FragPos;
 in vec3 Normal;
 in vec2 TexCoords;
+in vec4 VertexColor;
 
 // 1. Luz Direccional (Luna)
 struct DirLight {
@@ -51,9 +52,10 @@ uniform SpotLight spotLight;
 
 uniform bool useTexture;
 uniform vec3 objectColor;
+uniform float materialAlpha;
 uniform sampler2D texture_diffuse1;
 
-// Parámetros de niebla
+// ParÃ¡metros de niebla
 uniform vec3 fogColor;
 uniform float fogDensity;
 
@@ -67,8 +69,19 @@ void main()
     vec3 norm = normalize(Normal);
     vec3 viewDir = normalize(viewPos - FragPos);
 
-    // Selección entre textura o color sólido
-    vec3 texColor = useTexture ? vec3(texture(texture_diffuse1, TexCoords)) : objectColor;
+    // glTF combina la textura, el factor de color del material y el color
+    // pintado por vÃ©rtice. Los tres deben participar en el resultado final.
+    vec4 sampledColor = useTexture
+        ? texture(texture_diffuse1, TexCoords)
+        : vec4(1.0);
+
+    vec4 baseColor = sampledColor * vec4(objectColor, materialAlpha) * VertexColor;
+
+    // Recorta las zonas transparentes de hojas, ramas y flores.
+    if (baseColor.a < 0.10)
+        discard;
+
+    vec3 texColor = baseColor.rgb;
 
     // A. Luz lunar
     vec3 result = CalcDirLight(dirLight, norm, viewDir, texColor);
@@ -81,16 +94,16 @@ void main()
     // C. Reflector
     result += CalcSpotLight(spotLight, norm, FragPos, viewDir, texColor);
 
-    // D. Niebla exponencial cuadrática
+    // D. Niebla exponencial cuadrÃ¡tica
     float dist = length(viewPos - FragPos);
     float fogFactor = exp(-pow(dist * fogDensity, 2.0));
     fogFactor = clamp(fogFactor, 0.0, 1.0);
 
     vec3 finalColor = mix(fogColor, result, fogFactor);
-    FragColor = vec4(finalColor, 1.0);
+    FragColor = vec4(finalColor, baseColor.a);
 }
 
-// Implementación de Luz Direccional
+// ImplementaciÃ³n de Luz Direccional
 vec3 CalcDirLight(DirLight light, vec3 normal, vec3 viewDir, vec3 texColor)
 {
     vec3 lightDir = normalize(-light.direction);
@@ -105,7 +118,7 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 viewDir, vec3 texColor)
     return (ambient + diffuse + specular);
 }
 
-// Implementación de Luz Puntual
+// ImplementaciÃ³n de Luz Puntual
 vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 texColor)
 {
     vec3 lightDir = normalize(light.position - fragPos);
@@ -127,7 +140,7 @@ vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, v
     return (ambient + diffuse + specular);
 }
 
-// Implementación de Reflector (Spotlight)
+// ImplementaciÃ³n de Reflector (Spotlight)
 vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 texColor)
 {
     vec3 lightDir = normalize(light.position - fragPos);

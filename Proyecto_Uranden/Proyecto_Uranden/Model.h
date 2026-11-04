@@ -17,6 +17,7 @@
 #include <sstream>
 #include <iostream>
 #include <vector>
+#include <cstring>
 
 unsigned int TextureFromFile(const char* path, const std::string& directory);
 
@@ -39,8 +40,16 @@ private:
     void loadModel(std::string const& path) {
         Assimp::Importer importer;
         // aiProcess_Triangulate: transforma cuadriláteros o polígonos en triángulos
-        // aiProcess_FlipUVs: invierte el eje Y de las coordenadas UV para coincidir con OpenGL
-        const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenSmoothNormals);
+        // PreTransformVertices aplica las posiciones, rotaciones y escalas de
+        // los nodos glTF directamente sobre sus vertices. Esto evita que las
+        // piezas del mapa aparezcan amontonadas en el origen.
+        const aiScene* scene = importer.ReadFile(
+            path,
+            aiProcess_Triangulate |
+            aiProcess_GenSmoothNormals |
+            aiProcess_TransformUVCoords |
+            aiProcess_PreTransformVertices
+        );
 
         if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
             std::cout << "ERROR::ASSIMP::" << importer.GetErrorString() << std::endl;
@@ -101,6 +110,15 @@ private:
                 vertex.TexCoords = glm::vec2(0.0f, 0.0f);
             }
 
+            // Colores pintados sobre los vértices en Blender.
+            if (mesh->HasVertexColors(0)) {
+                const aiColor4D& color = mesh->mColors[0][i];
+                vertex.Color = glm::vec4(color.r, color.g, color.b, color.a);
+            }
+            else {
+                vertex.Color = glm::vec4(1.0f);
+            }
+
             vertices.push_back(vertex);
         }
 
@@ -112,11 +130,40 @@ private:
         }
 
         // 3. Procesar materiales y texturas asociadas
+        glm::vec4 baseColorFactor(1.0f);
         if (mesh->mMaterialIndex >= 0) {
             aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
 
-            // Mapas difusos
-            std::vector<Texture> diffuseMaps = loadMaterialTextures(material, aiTextureType_DIFFUSE, "texture_diffuse");
+            aiColor4D materialColor(1.0f, 1.0f, 1.0f, 1.0f);
+            if (aiGetMaterialColor(material, AI_MATKEY_BASE_COLOR, &materialColor) != AI_SUCCESS) {
+                aiGetMaterialColor(material, AI_MATKEY_COLOR_DIFFUSE, &materialColor);
+            }
+
+            float opacity = materialColor.a;
+            material->Get(AI_MATKEY_OPACITY, opacity);
+            baseColorFactor = glm::vec4(
+                materialColor.r,
+                materialColor.g,
+                materialColor.b,
+                opacity
+            );
+
+            // glTF almacena el color principal como BASE_COLOR. Si el modelo
+            // es OBJ u otro formato tradicional, se conserva el soporte para
+            // las texturas DIFFUSE que ya utilizaba el proyecto.
+            std::vector<Texture> diffuseMaps = loadMaterialTextures(
+                material,
+                aiTextureType_BASE_COLOR,
+                "texture_diffuse"
+            );
+
+            if (diffuseMaps.empty()) {
+                diffuseMaps = loadMaterialTextures(
+                    material,
+                    aiTextureType_DIFFUSE,
+                    "texture_diffuse"
+                );
+            }
             textures.insert(textures.end(), diffuseMaps.begin(), diffuseMaps.end());
 
             // Mapas especulares
@@ -124,7 +171,7 @@ private:
             textures.insert(textures.end(), specularMaps.begin(), specularMaps.end());
         }
 
-        return Mesh(vertices, indices, textures);
+        return Mesh(vertices, indices, textures, baseColorFactor);
     }
 
     std::vector<Texture> loadMaterialTextures(aiMaterial* mat, aiTextureType type, std::string typeName) {
@@ -135,8 +182,10 @@ private:
 
             bool skip = false;
             for (unsigned int j = 0; j < textures_loaded.size(); j++) {
-                if (std::strcmp(textures_loaded[j].path.data(), str.C_Str()) == 0) {
-                    textures.push_back(textures_loaded[j]);
+                if (std::strcmp(textures_loaded[j].path.c_str(), str.C_Str()) == 0) {
+                    Texture reusedTexture = textures_loaded[j];
+                    reusedTexture.type = typeName;
+                    textures.push_back(reusedTexture);
                     skip = true;
                     break;
                 }
@@ -155,8 +204,35 @@ private:
     }
 };
 
+inline int HexDigitValue(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+inline std::string DecodeTextureURI(const std::string& uri) {
+    std::string decoded;
+    decoded.reserve(uri.size());
+
+    for (std::size_t i = 0; i < uri.size(); ++i) {
+        if (uri[i] == '%' && i + 2 < uri.size()) {
+            int high = HexDigitValue(uri[i + 1]);
+            int low = HexDigitValue(uri[i + 2]);
+            if (high >= 0 && low >= 0) {
+                decoded.push_back(static_cast<char>((high << 4) | low));
+                i += 2;
+                continue;
+            }
+        }
+        decoded.push_back(uri[i]);
+    }
+
+    return decoded;
+}
+
 inline unsigned int TextureFromFile(const char* path, const std::string& directory) {
-    std::string filename = std::string(path);
+    std::string filename = DecodeTextureURI(std::string(path));
     filename = directory + '/' + filename;
 
     GLuint textureID = SOIL_load_OGL_texture(

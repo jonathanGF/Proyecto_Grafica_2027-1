@@ -1,4 +1,7 @@
+#ifndef _WIN64
 #define GLEW_STATIC
+#endif
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -16,12 +19,12 @@
 #include "Camera.h"
 
 // =========================================================================
-// 1. CONSTANTES Y CONFIGURACI”N GLOBAL
+// 1. CONSTANTES Y CONFIGURACI√ìN GLOBAL
 // =========================================================================
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
-// ConfiguraciÛn de la C·mara
+// Configuraci√≥n de la C√°mara
 Camera camera(glm::vec3(0.0f, 1.5f, 4.0f));
 
 bool firstMouse = true;
@@ -34,7 +37,7 @@ float lastFrame = 0.0f;
 double lastFpsTime = 0.0;
 int nbFrames = 0;
 
-// Constantes de SimulaciÛn
+// Constantes de Simulaci√≥n
 const float VELOCIDAD_CIRCUITO = 0.035f;
 
 // =========================================================================
@@ -74,10 +77,10 @@ const std::vector<glm::vec3> puntosCircuito = {
 
     // 4. Retorno superior (cruza de derecha a izquierda frente a la isla)
     glm::vec3(0.5f, -0.65f, -0.6f),   // Curva superior hacia el centro
-    glm::vec3(-0.6f, -0.65f, -0.5f)    // ReincorporaciÛn frente al muelle
+    glm::vec3(-0.6f, -0.65f, -0.5f)    // Reincorporaci√≥n frente al muelle
 };
 
-// GeometrÌa del Skybox
+// Geometr√≠a del Skybox
 const float skyboxVertices[] = {
     -1.0f,  1.0f, -1.0f,  -1.0f, -1.0f, -1.0f,   1.0f, -1.0f, -1.0f,
      1.0f, -1.0f, -1.0f,   1.0f,  1.0f, -1.0f,  -1.0f,  1.0f, -1.0f,
@@ -93,7 +96,7 @@ const float skyboxVertices[] = {
      1.0f, -1.0f, -1.0f,  -1.0f, -1.0f,  1.0f,   1.0f, -1.0f,  1.0f
 };
 
-// Estructura para las zonas de interacciÛn
+// Estructura para las zonas de interacci√≥n
 struct Estacion {
     glm::vec3 posicion;
     float radioDeteccion;
@@ -101,8 +104,8 @@ struct Estacion {
     bool activa;
 };
 
-// DefiniciÛn de las 4 estaciones
-// Nota: Las coordenadas son temporales. Debes ajustarlas a la posiciÛn real de cada zona en tu mapa.
+// Definici√≥n de las 4 estaciones
+// Nota: Las coordenadas son temporales. Debes ajustarlas a la posici√≥n real de cada zona en tu mapa.
 std::vector<Estacion> estaciones = {
     {glm::vec3(-3.5f, 0.0f, 0.0f), 3.0f, false, false},  // 1. Embarcadero
     {glm::vec3(-5.0f, 0.0f, 4.0f), 3.0f, false, false},  // 2. Parador
@@ -110,16 +113,16 @@ std::vector<Estacion> estaciones = {
     {glm::vec3(2.0f, 0.0f, 10.0f), 3.0f, false, false}   // 4. Islote
 };
 
-// Variable para controlar quÈ estaciÛn se est· mostrando en el HUD (-1 significa ninguna)
+// Variable para controlar qu√© estaci√≥n se est√° mostrando en el HUD (-1 significa ninguna)
 int estacionActivaHUD = -1;
 bool eKeyPressed = false;
 
 // =========================================================================
-// 3. FUNCIONES MATEM¡TICAS Y DE GENERACI”N PROCEDURAL
+// 3. FUNCIONES MATEM√ÅTICAS Y DE GENERACI√ìN PROCEDURAL
 // =========================================================================
 
 float obtenerAlturaTerreno(Model& modelo, float x, float z) {
-    // Reproducimos la misma transformaciÛn que tiene el terreno en el bucle principal
+    // Reproducimos la misma transformaci√≥n que tiene el terreno en el bucle principal
     glm::mat4 modelMat = glm::mat4(1.0f);
     modelMat = glm::translate(modelMat, glm::vec3(0.0f, -0.2f, 0.0f));
     modelMat = glm::scale(modelMat, glm::vec3(0.2f));
@@ -129,17 +132,17 @@ float obtenerAlturaTerreno(Model& modelo, float x, float z) {
     for (unsigned int i = 0; i < modelo.meshes.size(); i++) {
         for (size_t j = 0; j < modelo.meshes[i].indices.size(); j += 3) {
 
-            // Obtener vÈrtices originales (asume que 'vertices' e 'indices' son p˙blicos en tu clase Mesh)
+            // Obtener v√©rtices originales (asume que 'vertices' e 'indices' son p√∫blicos en tu clase Mesh)
             glm::vec3 v0 = modelo.meshes[i].vertices[modelo.meshes[i].indices[j]].Position;
             glm::vec3 v1 = modelo.meshes[i].vertices[modelo.meshes[i].indices[j + 1]].Position;
             glm::vec3 v2 = modelo.meshes[i].vertices[modelo.meshes[i].indices[j + 2]].Position;
 
-            // Pasamos los vÈrtices a coordenadas de mundo
+            // Pasamos los v√©rtices a coordenadas de mundo
             v0 = glm::vec3(modelMat * glm::vec4(v0, 1.0f));
             v1 = glm::vec3(modelMat * glm::vec4(v1, 1.0f));
             v2 = glm::vec3(modelMat * glm::vec4(v2, 1.0f));
 
-            // Coordenadas baricÈntricas para evaluar si (X, Z) est· dentro del tri·ngulo
+            // Coordenadas baric√©ntricas para evaluar si (X, Z) est√° dentro del tri√°ngulo
             float det = (v1.z - v2.z) * (v0.x - v2.x) + (v2.x - v1.x) * (v0.z - v2.z);
             if (det == 0.0f) continue;
 
@@ -147,7 +150,7 @@ float obtenerAlturaTerreno(Model& modelo, float x, float z) {
             float l2 = ((v2.z - v0.z) * (pos2D.x - v2.x) + (v0.x - v2.x) * (pos2D.y - v2.z)) / det;
             float l3 = 1.0f - l1 - l2;
 
-            // Si los 3 pesos son positivos, el punto est· dentro del tri·ngulo
+            // Si los 3 pesos son positivos, el punto est√° dentro del tri√°ngulo
             if (l1 >= 0.0f && l2 >= 0.0f && l3 >= 0.0f) {
                 return l1 * v0.y + l2 * v1.y + l3 * v2.y;
             }
@@ -160,7 +163,7 @@ float obtenerAlturaTerreno(Model& modelo, float x, float z) {
 float barryCentric(glm::vec3 p1, glm::vec3 p2, glm::vec3 p3, glm::vec2 pos) {
     float det = (p2.z - p3.z) * (p1.x - p3.x) + (p3.x - p2.x) * (p1.z - p3.z);
 
-    // Evitar divisiÛn por cero si el tri·ngulo est· degenerado
+    // Evitar divisi√≥n por cero si el tri√°ngulo est√° degenerado
     if (det == 0.0f) return 0.0f;
 
     float l1 = ((p2.z - p3.z) * (pos.x - p3.x) + (p3.x - p2.x) * (pos.y - p3.z)) / det;
@@ -191,7 +194,7 @@ void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices
         for (int j = 0; j <= resolucion; ++j) {
             float x = -mitad + j * paso;
 
-            // PosiciÛn (X, Y, Z)
+            // Posici√≥n (X, Y, Z)
             vertices.push_back(x);
             vertices.push_back(0.0f);
             vertices.push_back(z);
@@ -269,11 +272,11 @@ void processInput(GLFWwindow* window) {
                 if (estaciones[i].interactuable) {
                     // Alternar el estado del HUD
                     if (estacionActivaHUD == i) {
-                        estacionActivaHUD = -1; // Cerrar la cÈdula
+                        estacionActivaHUD = -1; // Cerrar la c√©dula
                         std::cout << "HUD cerrado." << std::endl;
                     }
                     else {
-                        estacionActivaHUD = i; // Mostrar la cÈdula
+                        estacionActivaHUD = i; // Mostrar la c√©dula
                         std::cout << "Mostrando HUD para Estacion " << i + 1 << std::endl;
 
                         // Espacio reservado para detonar animaciones (A1, A2, A3, A5)
@@ -302,11 +305,11 @@ void showFPS(GLFWwindow* window) {
 }
 
 // =========================================================================
-// 5. FUNCI”N PRINCIPAL
+// 5. FUNCI√ìN PRINCIPAL
 // =========================================================================
 
 int main() {
-    // --- InicializaciÛn GLFW & OpenGL Context ---
+    // --- Inicializaci√≥n GLFW & OpenGL Context ---
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -386,10 +389,15 @@ int main() {
     glBindVertexArray(0);
 
     // --- Carga de Modelos 3D ---
-    Model modeloMuelle("Models/Meshy_AI_Weathered_Wooden_Dock_1018053025_texture.obj");
-    Model modeloVela("Models/Meshy_AI_Marigold_Candle_Glow_1018054806_texture.obj");
+    // La canoa permanece separada porque tiene movimiento propio.
     Model modeloCanoa("Models/canoa.obj");
-    Model modeloTerreno("Models/Terreno.obj");
+
+    // El mapa glTF sustituye al terreno, muelle, veladoras y demas elementos
+    // estaticos que antes se cargaban como modelos independientes.
+    std::cout << "Cargando mapa completo de Uranden..." << std::endl;
+    Model modeloMapaCompleto("Models/MapaCompleto/Uranden_BAKING.gltf");
+    std::cout << "Mapa completo cargado correctamente. Mallas: "
+              << modeloMapaCompleto.meshes.size() << std::endl;
 
     // --- Motor de Audio ---
     AudioEngine audioEngine;
@@ -405,7 +413,7 @@ int main() {
     // Configurar VAO/VBO para un Quad 2D unitario (x, y, u, v)
     unsigned int hudVAO, hudVBO;
     float hudVertices[] = {
-        // PosiciÛn (X, Y)  // Textura (U, V)
+        // Posici√≥n (X, Y)  // Textura (U, V)
          0.0f,  1.0f,       0.0f, 1.0f,
          1.0f,  0.0f,       1.0f, 0.0f,
          0.0f,  0.0f,       0.0f, 0.0f,
@@ -428,7 +436,7 @@ int main() {
     unsigned int texCedula3 = SOIL_load_OGL_texture("Models/textures/3_Procesion-de-Canoas.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
     unsigned int texCedula4 = SOIL_load_OGL_texture("Models/textures/4_El-rescate-de-los-manantiales.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
 
-    // Par·metros b·sicos para que la textura no se vea borrosa ni se repita
+    // Par√°metros b√°sicos para que la textura no se vea borrosa ni se repita
     glBindTexture(GL_TEXTURE_2D, texCedula1);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -446,7 +454,7 @@ int main() {
 
         processInput(window);
 
-        // DetecciÛn de proximidad a las estaciones
+        // Detecci√≥n de proximidad a las estaciones
         for (int i = 0; i < estaciones.size(); i++) {
             float distancia = glm::distance(glm::vec2(camera.Position.x, camera.Position.z),
                 glm::vec2(estaciones[i].posicion.x, estaciones[i].posicion.z));
@@ -462,10 +470,10 @@ int main() {
             }
         }
 
-        // --- B. ActualizaciÛn de Cinem·tica y AnimaciÛn (Update) ---
+        // --- B. Actualizaci√≥n de Cinem√°tica y Animaci√≥n (Update) ---
         float tiempoAnim = currentFrame;
 
-        // Din·mica de remadas
+        // Din√°mica de remadas
         float cicloRemo = std::fmod(tiempoAnim, 2.2f) / 2.2f;
         float impulsoRemo = std::pow(std::sin(cicloRemo * 3.14159f), 0.7f) * 0.4f;
         float avanceGlobal = (tiempoAnim * VELOCIDAD_CIRCUITO) + (impulsoRemo * 0.015f);
@@ -483,27 +491,27 @@ int main() {
         glm::vec3 posActual = calcularCatmullRom(puntosCircuito[i0], puntosCircuito[i1],
             puntosCircuito[i2], puntosCircuito[i3], t);
 
-        // Vector tangente y orientaciÛn hacia el avance
+        // Vector tangente y orientaci√≥n hacia el avance
         float deltaT = 0.01f;
         glm::vec3 posFutura = calcularCatmullRom(puntosCircuito[i0], puntosCircuito[i1],
             puntosCircuito[i2], puntosCircuito[i3], t + deltaT);
         glm::vec3 direccionAvance = glm::normalize(posFutura - posActual);
         float anguloRumbo = glm::degrees(std::atan2(direccionAvance.x, direccionAvance.z));
 
-        // Oscilaciones por fÌsica de agua (m·s suaves)
+        // Oscilaciones por f√≠sica de agua (m√°s suaves)
         float bamboleoRoll = std::sin(cicloRemo * 6.28318f) * 1.5f;
         float cabeceoPitch = std::cos(cicloRemo * 6.28318f) * 0.8f;
         float flotacionOlas = std::sin(tiempoAnim * 1.0f) * 0.01f;
         posActual.y += flotacionOlas;
 
-        // PosiciÛn y parpadeo de la luz puntual din·mica (Canoa)
+        // Posici√≥n y parpadeo de la luz puntual din√°mica (Canoa)
         glm::vec3 posLuzCanoa = posActual + glm::vec3(0.0f, 0.18f, 0.0f);
         float parpadeoCanoa = 0.85f + 0.15f * std::sin(tiempoAnim * 14.0f + 2.5f);
         glm::vec3 colorLuzCanoa = glm::vec3(1.0f, 0.55f, 0.15f) * parpadeoCanoa;
 
-        // --- C. PreparaciÛn del Framebuffer y Par·metros AtmosfÈricos ---
+        // --- C. Preparaci√≥n del Framebuffer y Par√°metros Atmosf√©ricos ---
         glm::vec3 fogColor = glm::vec3(0.02f, 0.02f, 0.05f); // Tono de la bruma nocturna
-        float fogDensity = 0.0f; // Densidad de niebla (0.0f para inspecciÛn clara)
+        float fogDensity = 0.0f; // Densidad de niebla (0.0f para inspecci√≥n clara)
 
         glClearColor(fogColor.r, fogColor.g, fogColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -511,7 +519,7 @@ int main() {
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
         glm::mat4 view = camera.GetViewMatrix();
 
-        // --- D. Shader Principal: Paso de IluminaciÛn, Niebla y C·mara ---
+        // --- D. Shader Principal: Paso de Iluminaci√≥n, Niebla y C√°mara ---
         miShader.use();
         glUniform3fv(glGetUniformLocation(miShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
@@ -536,7 +544,7 @@ int main() {
             glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.07f);
         }
 
-        // 3. Luz Puntual 4 (Luz Din·mica dentro de la Canoa)
+        // 3. Luz Puntual 4 (Luz Din√°mica dentro de la Canoa)
         glUniform3fv(glGetUniformLocation(miShader.ID, "pointLights[4].position"), 1, glm::value_ptr(posLuzCanoa));
         glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[4].ambient"), colorLuzCanoa.r * 0.1f, colorLuzCanoa.g * 0.1f, colorLuzCanoa.b * 0.1f);
         glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[4].diffuse"), colorLuzCanoa.r, colorLuzCanoa.g, colorLuzCanoa.b);
@@ -564,26 +572,22 @@ int main() {
         glUniform1f(glGetUniformLocation(miShader.ID, "fogDensity"), fogDensity);
 
         // --- E. Renderizado de Mallas 3D Opacas ---
+        // Necesario para las hojas, ramas y flores con transparencia del glTF.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), true);
         glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
 
-        // 1. Muelle (Desplazado con offsetMuelle)
-        glm::mat4 dockModel = glm::mat4(1.0f);
-        dockModel = glm::translate(dockModel, glm::vec3(0.0f, -0.75f, 0.0f) + offsetMuelle);
-        dockModel = glm::scale(dockModel, glm::vec3(2.5f));
-        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(dockModel));
-        modeloMuelle.Draw(miShader);
+        // 1. Mapa completo exportado desde Blender.
+        // Se conserva la misma escala y altura que utilizaba el terreno OBJ.
+        glm::mat4 mapaModel = glm::mat4(1.0f);
+        mapaModel = glm::translate(mapaModel, glm::vec3(0.0f, -0.2f, 0.0f));
+        mapaModel = glm::scale(mapaModel, glm::vec3(0.2f));
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(mapaModel));
+        modeloMapaCompleto.Draw(miShader);
 
-        // 2. Veladoras fijas en los postes (Sincronizadas con offsetMuelle)
-        for (unsigned int i = 0; i < 4; i++) {
-            glm::mat4 candleModel = glm::mat4(1.0f);
-            candleModel = glm::translate(candleModel, pointLightOffsets[i] + offsetMuelle);
-            candleModel = glm::scale(candleModel, glm::vec3(0.20f));
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(candleModel));
-            modeloVela.Draw(miShader);
-        }
-
-        // 3. Canoa Animada (Recorre la nueva trayectoria adaptada al canal)
+        // 2. Canoa Animada (Recorre la trayectoria adaptada al canal)
         glm::mat4 canoaModel = glm::mat4(1.0f);
         canoaModel = glm::translate(canoaModel, posActual);
         canoaModel = glm::rotate(canoaModel, glm::radians(anguloRumbo), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -593,13 +597,6 @@ int main() {
         canoaModel = glm::scale(canoaModel, glm::vec3(2.0f));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(canoaModel));
         modeloCanoa.Draw(miShader);
-
-        // 4. Terreno
-        glm::mat4 terrainModel = glm::mat4(1.0f);
-        terrainModel = glm::translate(terrainModel, glm::vec3(0.0f, -0.2f, 0.0f));
-        terrainModel = glm::scale(terrainModel, glm::vec3(0.2f));
-        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(terrainModel));
-        modeloTerreno.Draw(miShader);
 
         // --- F. Renderizado de la Superficie del Agua ---
         waterShader.use();
@@ -647,14 +644,14 @@ int main() {
 
             hudShader.use();
             glUniform1i(glGetUniformLocation(hudShader.ID, "hudTexture"), 0);
-            // ProyecciÛn ortogr·fica (Ajusta los valores al ancho y alto real de tu ventana, ej. 800x600)
+            // Proyecci√≥n ortogr√°fica (Ajusta los valores al ancho y alto real de tu ventana, ej. 800x600)
             glm::mat4 projection = glm::ortho(0.0f, 800.0f, 0.0f, 600.0f);
             hudShader.setMat4("projection", projection);
 
-            // PosiciÛn y tamaÒo de la cÈdula en pantalla
+            // Posici√≥n y tama√±o de la c√©dula en pantalla
             glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, glm::vec3(80.0f, 120.0f, 0.0f)); // PosiciÛn centrada (X, Y)
-            model = glm::scale(model, glm::vec3(640.0f, 360.0f, 1.0f));    // TamaÒo ampliado (Ancho, Alto)
+            model = glm::translate(model, glm::vec3(80.0f, 120.0f, 0.0f)); // Posici√≥n centrada (X, Y)
+            model = glm::scale(model, glm::vec3(640.0f, 360.0f, 1.0f));    // Tama√±o ampliado (Ancho, Alto)
             hudShader.setMat4("model", model);
 
             // Vincular la textura correcta dependiendo de estacionActivaHUD (0 a 3)
