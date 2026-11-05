@@ -1,6 +1,4 @@
-#ifndef _WIN64
 #define GLEW_STATIC
-#endif
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -397,7 +395,7 @@ int main() {
     std::cout << "Cargando mapa completo de Uranden..." << std::endl;
     Model modeloMapaCompleto("Models/MapaCompleto/Uranden_BAKING.gltf");
     std::cout << "Mapa completo cargado correctamente. Mallas: "
-              << modeloMapaCompleto.meshes.size() << std::endl;
+        << modeloMapaCompleto.meshes.size() << std::endl;
 
     // --- Motor de Audio ---
     AudioEngine audioEngine;
@@ -441,7 +439,7 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     // Repite esto para texCedula2, texCedula3 y texCedula4...
-    
+
 
     // =====================================================================
     // 6. BUCLE PRINCIPAL DE RENDERIZADO
@@ -680,7 +678,7 @@ int main() {
                 glBindTexture(GL_TEXTURE_2D, texCedula4);
                 if (texCedula4 == 0) {
                     std::cout << "ERROR: SOIL no encuentra la imagen 4_El-rescate-de-los-manantiales.png" << std::endl;
-                }   
+                }
             }
 
             glBindVertexArray(hudVAO);
