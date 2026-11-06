@@ -16,14 +16,17 @@ void main()
 {
     vec3 pos = aPos;
 
-    // Superposición de ondas senoidales
-    float onda1 = sin(pos.x * 1.2 + time * 1.8) * 0.05;
-    float onda2 = cos(pos.z * 0.9 + time * 1.2) * 0.04;
+    // --- ONDAS SUAVES Y NOCTURNAS ---
+    // Amplitudes muy bajas (0.015 y 0.01) para un movimiento apenas perceptible y elegante
+    float onda1 = sin(pos.x * 0.3 + time * 0.8) * 0.015;
+    float onda2 = cos(pos.z * 0.4 + time * 0.6) * 0.010;
+
     pos.y += (onda1 + onda2);
 
-    // Derivadas para reconstruir el vector normal según la pendiente del agua
-    float dYdx = 1.2 * cos(pos.x * 1.2 + time * 1.8) * 0.05;
-    float dYdz = -0.9 * sin(pos.z * 0.9 + time * 1.2) * 0.04;
+    // Derivadas suaves para que la luz no queme los colores
+    float dYdx = 0.3 * 0.015 * cos(pos.x * 0.3 + time * 0.8);
+    float dYdz = -0.4 * 0.010 * sin(pos.z * 0.4 + time * 0.6);
+
     vec3 newNormal = normalize(vec3(-dYdx, 1.0, -dYdz));
 
     FragPos = vec3(model * vec4(pos, 1.0));
