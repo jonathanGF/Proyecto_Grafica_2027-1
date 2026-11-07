@@ -1,10 +1,13 @@
+#ifndef _WIN64
 #define GLEW_STATIC
+#endif
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <string>
 #include <vector>
+#include <cmath>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -405,7 +408,7 @@ int main() {
 
     Model modeloCanoa("Models/canoa.obj");
     std::cout << "Cargando mapa completo de Uranden..." << std::endl;
-    Model modeloMapaCompleto("Models/MapaCompleto/Uranden_BAKING.gltf");
+    Model modeloMapaCompleto("Models/MapaCompleto/Uranden_MAPA.gltf"); // Nuevo mapa exportado desde Blender
 
     AudioEngine audioEngine;
     if (!audioEngine.init()) {
@@ -659,6 +662,7 @@ int main() {
         glUniform1f(glGetUniformLocation(miShader.ID, "materialAlpha"), 1.0f);
 
         // Mapa Completo
+        // Transformacion compartida con Uranden_MAPA; si cambias el origen/escala en Blender, recalibrar.
         glm::mat4 mapaModel = glm::mat4(1.0f);
         mapaModel = glm::translate(mapaModel, glm::vec3(0.0f, -0.2f, 0.0f));
         mapaModel = glm::scale(mapaModel, glm::vec3(0.2f));
