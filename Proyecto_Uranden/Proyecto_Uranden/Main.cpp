@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <fstream>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -136,6 +137,7 @@ struct Estacion {
     bool activa;
 };
 
+// Estaciones: 0 = Muelle/Embarcadero, 1 = Altar, 2 = Plaza, 3 = Letras URANDEN
 std::vector<Estacion> estaciones = {
     {glm::vec3(-3.5f, 0.0f, 0.0f), 3.0f, false, false},
     {glm::vec3(-5.0f, 0.0f, 4.0f), 3.0f, false, false},
@@ -145,6 +147,153 @@ std::vector<Estacion> estaciones = {
 
 int estacionActivaHUD = -1;
 bool eKeyPressed = false;
+
+// =========================================================================
+// A1: EXHIBICION DE LOS MARIPOSEROS (canoa fija junto al muelle, a la altura del altar)
+// =========================================================================
+glm::vec3 posCanoaA1 = glm::vec3(-1.87317f, -0.806756f, 10.7197f); // calibrada (M para ajustar, P para imprimir)
+float yawCanoaA1 = 101.509f;
+bool calibrandoA1 = false;
+
+// Pivotes en unidades del modelo, ejes OpenGL (ver claude/pivotes_mariposero.md)
+const glm::vec3 P_PELVIS = glm::vec3(-0.0017f, -0.0732f, -0.0031f);
+const glm::vec3 P_HOMBRO_DER = glm::vec3(-0.168f, 0.1732f, -0.04062f);
+const glm::vec3 P_HOMBRO_IZQ = glm::vec3(0.1578f, 0.1793f, -0.04094f);
+const glm::vec3 P_CODO_DER = glm::vec3(-0.2226f, 0.1318f, -0.03336f);
+const glm::vec3 P_CODO_IZQ = glm::vec3(0.2101f, 0.1384f, -0.03174f);
+const glm::vec3 P_MANO_IZQ = glm::vec3(0.3037f, 0.05045f, 0.02456f);
+const glm::vec3 P_CADERA_DER = glm::vec3(-0.04884f, -0.07459f, -0.002458f);
+const glm::vec3 P_CADERA_IZQ = glm::vec3(0.04547f, -0.07175f, -0.003723f);
+const glm::vec3 P_RODILLA_DER = glm::vec3(-0.0635f, -0.213f, -0.01632f);
+const glm::vec3 P_RODILLA_IZQ = glm::vec3(0.05895f, -0.2137f, -0.01617f);
+const glm::vec3 P_AGARRE = glm::vec3(-0.9415f, 0.1457f, 0.06631f);
+const glm::vec3 P_EJE_ALAS = glm::vec3(-0.9415f, 0.6304f, 0.06631f);
+
+// Longitudes de la pierna (unidades del modelo) para calcular la bajada al sentarse
+const float L_MUSLO = 0.14f;   // cadera -> rodilla
+const float L_PIERNA = 0.22f;   // rodilla -> planta del pie
+
+// Pose de los mariposeros (grados). Ambos pescadores usan la misma pose (espejo).
+// Convencion: valores positivos = inclinarse/levantar hacia el frente o hacia afuera.
+struct PoseA1 {
+    float torso;            // inclinacion del torso hacia el frente (X, en la pelvis)
+    float cadera;           // flexion de cadera, muslos hacia el frente (X)
+    float rodilla;          // flexion de rodilla (X)
+    float hombroExtFrente;  // brazo de la red: levantar hacia el frente (X)
+    float hombroExtLado;    // brazo de la red: levantar hacia el costado (Z)
+    float codoExt;          // doblar codo del brazo de la red (X)
+    float hombroIntFrente;  // brazo interior: hacia el frente (X)
+    float hombroIntLado;    // brazo interior: hacia el costado (Z)
+    float codoInt;          // doblar codo del brazo interior (X)
+    float redInclinacion;   // inclinar la red hacia el frente / el agua (X, en el agarre)
+    float redLado;          // inclinar la red hacia afuera (Z, en el agarre)
+    float redApertura;      // abrir / cerrar las alas (Y, en el eje del mango)
+};
+PoseA1 poseA1 = {};
+
+const int NUM_ARTIC_A1 = 12;
+const char* NOMBRES_ARTIC_A1[NUM_ARTIC_A1] = {
+    "torso", "cadera", "rodilla",
+    "hombroExtFrente", "hombroExtLado", "codoExt",
+    "hombroIntFrente", "hombroIntLado", "codoInt",
+    "redInclinacion", "redLado", "redApertura"
+};
+float* articA1(PoseA1& p, int i) {
+    float* campos[NUM_ARTIC_A1] = {
+        &p.torso, &p.cadera, &p.rodilla,
+        &p.hombroExtFrente, &p.hombroExtLado, &p.codoExt,
+        &p.hombroIntFrente, &p.hombroIntLado, &p.codoInt,
+        &p.redInclinacion, &p.redLado, &p.redApertura };
+    return campos[i];
+}
+int articSeleccionadaA1 = -1;   // C selecciona, V / B mueven
+
+// =========================================================================
+// KEYFRAMES A1 (14 cuadros, interpolacion lineal)
+// Cada fila: torso, cadera, rodilla, hombroExtFrente, hombroExtLado, codoExt,
+//            hombroIntFrente, hombroIntLado, codoInt, redInclinacion, redLado, redApertura
+// =========================================================================
+std::vector<PoseA1> keyframesA1 = {
+    //torso cad rod  hEF  hEL codE  hIF  hIL codI  redInc redLado apert (negativo = cerrar)
+    {  0,  0,  0,   0,   0,  0,   0,   0,  0,    0,   0,   0 }, // KF0  reposo, red vertical
+    { -5,  0,  3,  10,  -5, 10,   5, -15, 35,   20,   0,   0 }, // KF1  anticipacion (se echa atras)
+    { 25,  9, 15,  30, -15, 10,  25, -30, 35,   55,   0,   0 }, // KF2  se inclina al frente
+    { 45, 15, 23,  55, -15,  0,  50, -30, 20,   95,   0,   0 }, // KF3  estira la red lejos de la canoa
+    { 55, 20, 30,  60, -15,  0,  55, -30, 15,  115,   0,   0 }, // KF4  baja la red al agua (alas abiertas)
+    { 60, 22, 33,  55, -15,  0,  50, -30, 15,  120,   0, -18 }, // KF5  la hunde, empieza a cerrar
+    { 60, 22, 33,  55, -15,  0,  50, -30, 15,  120,  15, -40 }, // KF6  barrido, se cierra la mariposa
+    { 56, 20, 30,  58, -15,  5,  53, -30, 20,  127, -10, -55 }, // KF7  barrido de regreso, cerrada
+    { 40, 15, 23,  65, -15, 10,  60, -30, 30,  115,   0, -55 }, // KF8  la saca cerrada
+    { 20,  8, 12,  80, -15, 20,  75, -30, 40,  115,   0, -55 }, // KF9  la levanta
+    {  0,  0,  2,  95, -10, 25,  90, -25, 50,  125,   0, -55 }, // KF10 red en alto, cerrada con la pesca
+    { -5,  0,  0, 100, -10, 20,  95, -25, 45,  120,   8, -55 }, // KF11 muestra la pesca
+    {  0,  0,  0,  40,  -5, 20,  35, -20, 45,   70,   0, -25 }, // KF12 baja la red y la abre
+    {  0,  0,  0,   0,   0,  0,   0,   0,  0,    0,   0,   0 }  // KF13 reposo
+};
+bool reproduciendoA1 = true;          // 1 = reproducir / pausar
+float tiempoAnimA1 = 0.0f;
+const float DURACION_TRAMO_A1 = 1.0f; // segundos entre cuadros (14 cuadros = 13 s)
+const char* ARCHIVO_KF_A1 = "animaciones/A1_mariposeros.txt";
+
+PoseA1 interpolarPose(const PoseA1& a, const PoseA1& b, float t) {
+    PoseA1 r;
+    PoseA1& ra = const_cast<PoseA1&>(a);
+    PoseA1& rb = const_cast<PoseA1&>(b);
+    for (int i = 0; i < NUM_ARTIC_A1; i++)
+        *articA1(r, i) = *articA1(ra, i) + (*articA1(rb, i) - *articA1(ra, i)) * t;
+    return r;
+}
+
+bool guardarKeyframesA1(const char* ruta) {
+    std::ofstream f(ruta);
+    if (!f.is_open()) return false;
+    f << keyframesA1.size() << "\n";
+    for (auto& kf : keyframesA1) {
+        for (int i = 0; i < NUM_ARTIC_A1; i++) f << *articA1(kf, i) << (i + 1 < NUM_ARTIC_A1 ? " " : "\n");
+    }
+    return true;
+}
+
+bool cargarKeyframesA1(const char* ruta) {
+    std::ifstream f(ruta);
+    if (!f.is_open()) return false;
+    size_t n = 0;
+    f >> n;
+    std::vector<PoseA1> leidos(n);
+    for (size_t k = 0; k < n; k++)
+        for (int i = 0; i < NUM_ARTIC_A1; i++)
+            if (!(f >> *articA1(leidos[k], i))) return false;
+    if (leidos.size() < 2) return false;
+    keyframesA1 = leidos;
+    return true;
+}
+
+// Detecta el momento en que se presiona una tecla (no mientras se mantiene)
+bool teclaPulsada(GLFWwindow* window, int tecla) {
+    static bool estado[GLFW_KEY_LAST + 1] = { false };
+    bool ahora = glfwGetKey(window, tecla) == GLFW_PRESS;
+    bool pulsada = ahora && !estado[tecla];
+    estado[tecla] = ahora;
+    return pulsada;
+}
+
+// Rotacion alrededor de un pivote: M * T(p) * R * T(-p)
+glm::mat4 rotarEnPivote(const glm::mat4& M, const glm::vec3& pivote, float grados, const glm::vec3& eje) {
+    glm::mat4 r = glm::translate(M, pivote);
+    r = glm::rotate(r, glm::radians(grados), eje);
+    return glm::translate(r, -pivote);
+}
+
+// Escala del pescador y la red (calibrable con T / G en modo M)
+float escalaA1 = 0.462976f;
+// Escala de la canoa A1 (calibrable con Y / H en modo M). La del circuito sigue en 2.0
+float escalaCanoaA1 = 2.0f;
+
+// Posicion de cada pescador a lo largo de la canoa (eje X local de la canoa)
+const float SEPARACION_PESCADOR = 0.225f; // por unidad de escala de la canoa (0.45 con escala 2)
+// Altura del piso de la canoa respecto a su origen, y distancia pies->pelvis del modelo (sin escalar)
+float pisoCanoaA1 = -0.07f;            // calibrable con R / F en modo M
+const float PIES_A_ORIGEN = 0.43f;
 
 // =========================================================================
 // 3. FUNCIONES AUXILIARES
@@ -287,6 +436,75 @@ void processInput(GLFWwindow* window) {
         if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)     lucesManantialOpuesto[reflectorOpuestoSeleccionado].y -= velAjuste;
     }
 
+    // --- CALIBRACION CANOA A1 (M = activar, N = desactivar) ---
+    if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
+        calibrandoA1 = true; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1;
+    }
+    if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) calibrandoA1 = false;
+
+    if (calibrandoA1) {
+        float v = 0.6f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)    posCanoaA1.z -= v;
+        if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)  posCanoaA1.z += v;
+        if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)  posCanoaA1.x -= v;
+        if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) posCanoaA1.x += v;
+        if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS)     posCanoaA1.y += v;
+        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)     posCanoaA1.y -= v;
+        if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS)     yawCanoaA1 += 60.0f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS)     yawCanoaA1 -= 60.0f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)     escalaA1 += 0.3f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS) { escalaA1 -= 0.3f * deltaTime; if (escalaA1 < 0.05f) escalaA1 = 0.05f; }
+        if (glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS)     escalaCanoaA1 += 0.6f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) { escalaCanoaA1 -= 0.6f * deltaTime; if (escalaCanoaA1 < 0.1f) escalaCanoaA1 = 0.1f; }
+        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)     pisoCanoaA1 += 0.2f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)     pisoCanoaA1 -= 0.2f * deltaTime;
+    }
+
+    // --- PRUEBA DE ARTICULACIONES A1 ---
+    // C = siguiente articulacion, V / B la mueven (+ / -), Q reinicia la pose
+    static bool tabPresionado = false;
+    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
+        if (!tabPresionado) {
+            tabPresionado = true;
+            articSeleccionadaA1 = (articSeleccionadaA1 + 1) % NUM_ARTIC_A1;
+            std::cout << "Articulacion seleccionada: " << NOMBRES_ARTIC_A1[articSeleccionadaA1] << std::endl;
+        }
+    }
+    else {
+        tabPresionado = false;
+    }
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) poseA1 = PoseA1{};
+    if (articSeleccionadaA1 >= 0 && !reproduciendoA1) {
+        float* a = articA1(poseA1, articSeleccionadaA1);
+        if (glfwGetKey(window, GLFW_KEY_V) == GLFW_PRESS) *a += 45.0f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) *a -= 45.0f * deltaTime;
+    }
+
+    // --- KEYFRAMES A1 ---
+    // 1 = reproducir/pausar, 2 = agregar pose actual como cuadro, 3 = borrar cuadros,
+    // 4 = guardar archivo, 5 = cargar archivo
+    if (teclaPulsada(window, GLFW_KEY_1)) {
+        reproduciendoA1 = !reproduciendoA1;
+        std::cout << (reproduciendoA1 ? "A1: reproduciendo" : "A1: pausa (edicion manual)") << std::endl;
+    }
+    if (teclaPulsada(window, GLFW_KEY_2)) {
+        keyframesA1.push_back(poseA1);
+        std::cout << "A1: cuadro agregado. Total = " << keyframesA1.size() << std::endl;
+    }
+    if (teclaPulsada(window, GLFW_KEY_3)) {
+        keyframesA1.clear();
+        reproduciendoA1 = false;
+        std::cout << "A1: cuadros borrados (captura con 2)" << std::endl;
+    }
+    if (teclaPulsada(window, GLFW_KEY_4)) {
+        if (guardarKeyframesA1(ARCHIVO_KF_A1)) std::cout << "A1: guardado en " << ARCHIVO_KF_A1 << std::endl;
+        else std::cout << "A1: no se pudo guardar (existe la carpeta 'animaciones'?)" << std::endl;
+    }
+    if (teclaPulsada(window, GLFW_KEY_5)) {
+        if (cargarKeyframesA1(ARCHIVO_KF_A1)) std::cout << "A1: cargados " << keyframesA1.size() << " cuadros" << std::endl;
+        else std::cout << "A1: no se pudo cargar " << ARCHIVO_KF_A1 << std::endl;
+    }
+
     // Guardar coordenadas con P
     static bool pKeyPressed = false;
     if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
@@ -306,6 +524,13 @@ void processInput(GLFWwindow* window) {
                     << lucesManantialOpuesto[i].y << "f, "
                     << lucesManantialOpuesto[i].z << "f)," << std::endl;
             }
+            std::cout << "\n=== CANOA A1 (MARIPOSEROS) ===\n    posCanoaA1 = glm::vec3("
+                << posCanoaA1.x << "f, " << posCanoaA1.y << "f, " << posCanoaA1.z
+                << "f);  yawCanoaA1 = " << yawCanoaA1 << "f;"
+                << "\n    escalaA1 = " << escalaA1 << "f;  pisoCanoaA1 = " << pisoCanoaA1 << "f;  escalaCanoaA1 = " << escalaCanoaA1 << "f;" << std::endl;
+            std::cout << "\n=== POSE A1 (grados) ===" << std::endl;
+            for (int i = 0; i < NUM_ARTIC_A1; i++)
+                std::cout << "    " << NOMBRES_ARTIC_A1[i] << " = " << *articA1(poseA1, i) << std::endl;
             std::cout << "=========================================================\n" << std::endl;
         }
     }
@@ -409,6 +634,30 @@ int main() {
     Model modeloCanoa("Models/canoa.obj");
     std::cout << "Cargando mapa completo de Uranden..." << std::endl;
     Model modeloMapaCompleto("Models/MapaCompleto/Uranden_MAPA.gltf"); // Nuevo mapa exportado desde Blender
+
+    std::cout << "Cargando mariposero..." << std::endl;
+    Model mCuerpo("Models/mariposero/cuerpo.obj");
+    Model mBrazoDer("Models/mariposero/brazoDer.obj");
+    Model mBrazoIzq("Models/mariposero/brazoIzq.obj");
+    Model mAntebrazoDer("Models/mariposero/antebrazoDer.obj");
+    Model mAntebrazoIzq("Models/mariposero/antebrazoIzq.obj");
+    Model mMusloDer("Models/mariposero/musloDer.obj");
+    Model mMusloIzq("Models/mariposero/musloIzq.obj");
+    Model mPantorrillaDer("Models/mariposero/pantorrillaDer.obj");
+    Model mPantorrillaIzq("Models/mariposero/pantorrillaIzq.obj");
+    Model mMango("Models/mariposero/mango.obj");
+    Model mAlaIzq("Models/mariposero/alaIzq.obj");
+    Model mAlaDer("Models/mariposero/alaDer.obj");
+
+    if (cargarKeyframesA1(ARCHIVO_KF_A1))
+        std::cout << "A1: keyframes cargados desde " << ARCHIVO_KF_A1 << std::endl;
+    else
+        std::cout << "A1: usando los 14 keyframes predeterminados" << std::endl;
+
+    auto dibujar = [&](Model& m, const glm::mat4& M) {
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(M));
+        m.Draw(miShader);
+        };
 
     AudioEngine audioEngine;
     if (!audioEngine.init()) {
@@ -518,6 +767,21 @@ int main() {
             glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
             glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.09f);
             glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.032f);
+        }
+
+        // 2b. Luz Puntual 0 reutilizada: iluminacion de los mariposeros (A1)
+        //     Blanco calido, al frente y por encima de la canoa A1 (gira con ella)
+        {
+            glm::vec4 offLocal = glm::vec4(0.0f, 0.9f, 0.8f, 1.0f);
+            glm::vec3 posLuzA1 = posCanoaA1 + glm::vec3(
+                glm::rotate(glm::mat4(1.0f), glm::radians(yawCanoaA1), glm::vec3(0.0f, 1.0f, 0.0f)) * offLocal);
+            glUniform3fv(glGetUniformLocation(miShader.ID, "pointLights[0].position"), 1, glm::value_ptr(posLuzA1));
+            glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[0].ambient"), 0.03f, 0.03f, 0.03f);
+            glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[0].diffuse"), 0.95f, 0.90f, 0.80f);
+            glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[0].specular"), 0.20f, 0.20f, 0.20f);
+            glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[0].constant"), 1.0f);
+            glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[0].linear"), 0.35f);
+            glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[0].quadratic"), 0.45f);
         }
 
         // 3. Luz Puntual 4 (Canoa)
@@ -679,6 +943,80 @@ int main() {
         canoaModel = glm::scale(canoaModel, glm::vec3(2.0f));
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(canoaModel));
         modeloCanoa.Draw(miShader);
+
+        // --- A1: Canoa de los mariposeros (fija) ---
+        glm::mat4 canoaA1 = glm::translate(glm::mat4(1.0f), posCanoaA1);
+        canoaA1 = glm::rotate(canoaA1, glm::radians(yawCanoaA1), glm::vec3(0.0f, 1.0f, 0.0f));
+        dibujar(modeloCanoa, glm::scale(canoaA1, glm::vec3(escalaCanoaA1)));
+
+        // Reproduccion de keyframes (interpolacion lineal entre cuadros consecutivos, en ciclo)
+        if (reproduciendoA1 && keyframesA1.size() >= 2) {
+            int tramos = (int)keyframesA1.size() - 1;
+            tiempoAnimA1 += deltaTime;
+            float duracionTotal = tramos * DURACION_TRAMO_A1;
+            if (tiempoAnimA1 >= duracionTotal) tiempoAnimA1 = std::fmod(tiempoAnimA1, duracionTotal);
+            int k = (int)(tiempoAnimA1 / DURACION_TRAMO_A1);
+            if (k >= tramos) k = tramos - 1;
+            float t = (tiempoAnimA1 - k * DURACION_TRAMO_A1) / DURACION_TRAMO_A1;
+            poseA1 = interpolarPose(keyframesA1[k], keyframesA1[k + 1], t);
+        }
+
+        // Bajada de la pelvis para que los pies sigan en el piso al flexionar cadera y rodilla
+        float aC = glm::radians(poseA1.cadera);
+        float aR = glm::radians(poseA1.rodilla);
+        float bajada = (L_MUSLO + L_PIERNA) - (L_MUSLO * std::cos(aC) + L_PIERNA * std::cos(aC - aR));
+
+        const glm::vec3 EJE_X(1.0f, 0.0f, 0.0f), EJE_Y(0.0f, 1.0f, 0.0f), EJE_Z(0.0f, 0.0f, 1.0f);
+
+        for (int p = 0; p < 2; p++) {
+            float sep = SEPARACION_PESCADOR * escalaCanoaA1;
+            float xLocal = (p == 0) ? sep : -sep;
+            float yLocal = pisoCanoaA1 + PIES_A_ORIGEN * escalaA1;   // pies sobre el piso de la canoa
+            glm::mat4 base = glm::translate(canoaA1, glm::vec3(xLocal, yLocal, 0.0f));
+            base = glm::scale(base, glm::vec3(escalaA1));
+            if (p == 1) base = glm::scale(base, glm::vec3(-1.0f, 1.0f, 1.0f)); // segundo pescador en espejo
+
+            // Nivel 0: pelvis (baja al sentarse)
+            glm::mat4 pelvis = glm::translate(base, glm::vec3(0.0f, -bajada, 0.0f));
+
+            // Nivel 1: torso
+            glm::mat4 torso = rotarEnPivote(pelvis, P_PELVIS, poseA1.torso, EJE_X);
+            dibujar(mCuerpo, torso);
+
+            // Brazo exterior (izquierdo del modelo, +X) -> antebrazo -> red
+            //   frente: -X lleva el brazo hacia +Z (al frente); lado: -Z lo sube hacia +X (afuera)
+            glm::mat4 brazoExt = rotarEnPivote(torso, P_HOMBRO_IZQ, -poseA1.hombroExtFrente, EJE_X);
+            brazoExt = rotarEnPivote(brazoExt, P_HOMBRO_IZQ, -poseA1.hombroExtLado, EJE_Z);
+            glm::mat4 antebrazoExt = rotarEnPivote(brazoExt, P_CODO_IZQ, -poseA1.codoExt, EJE_X);
+            dibujar(mBrazoIzq, brazoExt);
+            dibujar(mAntebrazoIzq, antebrazoExt);
+
+            // Brazo interior (derecho del modelo, -X); en Z el signo se invierte para que + suba hacia afuera
+            glm::mat4 brazoInt = rotarEnPivote(torso, P_HOMBRO_DER, -poseA1.hombroIntFrente, EJE_X);
+            brazoInt = rotarEnPivote(brazoInt, P_HOMBRO_DER, poseA1.hombroIntLado, EJE_Z);
+            glm::mat4 antebrazoInt = rotarEnPivote(brazoInt, P_CODO_DER, -poseA1.codoInt, EJE_X);
+            dibujar(mBrazoDer, brazoInt);
+            dibujar(mAntebrazoDer, antebrazoInt);
+
+            // Piernas (cuelgan de la pelvis, no del torso)
+            glm::mat4 musloD = rotarEnPivote(pelvis, P_CADERA_DER, -poseA1.cadera, EJE_X);
+            glm::mat4 musloI = rotarEnPivote(pelvis, P_CADERA_IZQ, -poseA1.cadera, EJE_X);
+            dibujar(mMusloDer, musloD);
+            dibujar(mMusloIzq, musloI);
+            dibujar(mPantorrillaDer, rotarEnPivote(musloD, P_RODILLA_DER, poseA1.rodilla, EJE_X));
+            dibujar(mPantorrillaIzq, rotarEnPivote(musloI, P_RODILLA_IZQ, poseA1.rodilla, EJE_X));
+
+            // Red: el agarre del mango se coloca en la mano exterior
+            glm::mat4 mango = glm::translate(antebrazoExt, P_MANO_IZQ);
+            mango = glm::rotate(mango, glm::radians(-poseA1.redLado), EJE_Z);       // + hacia afuera
+            mango = glm::rotate(mango, glm::radians(poseA1.redInclinacion), EJE_X); // + hacia el frente / agua
+            mango = glm::translate(mango, -P_AGARRE);
+            dibujar(mMango, mango);
+
+            // Alas: giran alrededor del eje vertical del mango, en sentidos opuestos
+            dibujar(mAlaIzq, rotarEnPivote(mango, P_EJE_ALAS, poseA1.redApertura, EJE_Y));
+            dibujar(mAlaDer, rotarEnPivote(mango, P_EJE_ALAS, -poseA1.redApertura, EJE_Y));
+        }
 
         // --- Render Focos Físicos (Emisión pura sin sombras) ---
         glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), false);
