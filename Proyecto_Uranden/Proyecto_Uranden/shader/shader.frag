@@ -42,7 +42,7 @@ struct SpotLight {
     vec3 specular;       
 };
 
-#define NR_POINT_LIGHTS 24
+#define NR_POINT_LIGHTS 50
 
 uniform vec3 viewPos;
 uniform DirLight dirLight;
