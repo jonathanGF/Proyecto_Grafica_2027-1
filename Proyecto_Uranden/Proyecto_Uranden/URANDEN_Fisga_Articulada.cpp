@@ -1,9 +1,6 @@
-// URANDEN, Michoacan - LANZAMIENTO NATURAL DE FISGA (V3, movimiento fluido)
+// URANDEN, Michoacan - LANZAMIENTO NATURAL DE FISGA
 // Basado en la practica de KeyFrames: K, L, M, R.
-// Recupera el esqueleto del GLB original: hombro, codo y mano derecha.
-// GPU: skinning en el vertex shader para evitar que la escena se congele.
-// La fisga sigue la mano hasta la liberacion; despues vuela por separado.
-// ESCENA INDEPENDIENTE: contiene main(). No compilar junto a otro main().
+
 #define GLEW_STATIC
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
