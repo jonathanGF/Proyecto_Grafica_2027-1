@@ -24,13 +24,15 @@ void main()
     vec3 lightDir = normalize(-dirLightDir);
     float diff = max(dot(norm, lightDir), 0.0);
 
-    // Reflejo especular (destello lunar sobre las crestas del oleaje)
+    // Reflejo especular concentrado y fino
     vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(norm, halfwayDir), 0.0), 32.0);
+    // Subimos el exponente de 32.0 a 256.0 para eliminar la mancha circular amplia
+    float spec = pow(max(dot(norm, halfwayDir), 0.0), 256.0);
 
-    vec3 ambient = 0.4 * waterColor;
-    vec3 diffuse = 0.6 * diff * waterColor;
-    vec3 specular = vec3(0.6, 0.7, 0.8) * spec * 0.8;
+    vec3 ambient = 0.35 * waterColor;
+    vec3 diffuse = 0.50 * diff * waterColor;
+    // Atenuamos el destello especular para ambiente nocturno (antes 0.8)
+    vec3 specular = vec3(0.3, 0.4, 0.5) * spec * 0.25;
 
     vec3 result = ambient + diffuse + specular;
 

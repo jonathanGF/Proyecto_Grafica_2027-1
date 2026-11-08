@@ -18,6 +18,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+<<<<<<< HEAD
     <ClCompile Include="Main.cpp">
       <Filter>Archivos de origen</Filter>
     </ClCompile>
@@ -29,6 +30,8 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+=======
+>>>>>>> 3227cbca6b1f1d3a08e0fea38d959c2614323052
     <None Include="shader\shader.frag">
       <Filter>Archivos de origen\Shader</Filter>
     </None>
@@ -47,13 +50,36 @@
     <None Include="shader\water.vert">
       <Filter>Archivos de origen\Shader</Filter>
     </None>
+    <None Include="shader\hud.fs">
+      <Filter>Archivos de origen\Shader</Filter>
+    </None>
+    <None Include="shader\hud.vs">
+      <Filter>Archivos de origen\Shader</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AudioEngine.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
+<<<<<<< HEAD
     <ClInclude Include="ViejitoRig.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
+=======
+    <ClInclude Include="Camera.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
+    <ClInclude Include="Shader.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
+    <ClInclude Include="Model.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Main.cpp">
+      <Filter>Archivos de origen</Filter>
+    </ClCompile>
+>>>>>>> 3227cbca6b1f1d3a08e0fea38d959c2614323052
   </ItemGroup>
 </Project>
