@@ -52,8 +52,9 @@ GLint ubicacionUniform(GLuint programa, const std::string& nombre) {
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
-Camera camera(glm::vec3(0.0f, 1.5f, 4.0f));
-
+Camera camera(glm::vec3(0.0f, 0.10f, 4.0f));
+// --- VARIABLE PARA EL MODO DRON AUTOMATICO ---
+bool modoDron = false;
 bool firstMouse = true;
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
@@ -71,6 +72,7 @@ float escalaViejitos = 0.161891f;
 glm::vec3 offsetViejitos(0.352146f, -0.199837f, 0.954319f);
 float velAnimViejitos = 0.233078f;
 float rotacionViejitos = -109.633f;
+float factorEscalaBaston = 0.759367f; // Multiplicador para compensar el OBJ del baston
 
 // =========================================================================
 // 2. DATOS DE ESCENA Y TRAYECTORIAS FIJAS
@@ -814,6 +816,15 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
     camera.ProcessMouseMovement(xoffset, yoffset);
 }
 
+// --- FUNCION AUXILIAR PARA TELETRANSPORTAR LA CAMARA A PUNTOS CLAVE ---
+void fijarCamara(const glm::vec3& pos, float pitch, float yaw) {
+    camera.Position = pos;
+    camera.Pitch = pitch;
+    camera.Yaw = yaw;
+    // Forzamos la actualizacion de los vectores directores
+    camera.ProcessMouseMovement(0.0f, 0.0f);
+}
+
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
@@ -851,6 +862,47 @@ void processInput(GLFWwindow* window) {
         animacionProcesionActiva = true;
         tiempoProcesion = 0.0f;
         std::cout << ">> Procesion de canoas iniciada en el manantial." << std::endl;
+    }
+
+    // =========================================================================
+    // ATAJOS DE CAMARA PARA GRABACION DE VIDEOS (RUBRICA)
+    // =========================================================================
+
+    // Tecla 7: Video A - Panoramica elevada del entorno (Agua HD, luces y cielo)
+    if (teclaPulsada(window, GLFW_KEY_7)) {
+        fijarCamara(glm::vec3(0.0f, 6.5f, 5.0f), -35.0f, -90.0f);
+        std::cout << ">> [CAMARA 7]: Vista panoramica del entorno activada." << std::endl;
+    }
+
+    // Tecla 8: Video B - Inicio de recorrido (Frente al Islote URANDEN)
+    if (teclaPulsada(window, GLFW_KEY_8)) {
+        fijarCamara(glm::vec3(4.5f, 0.10f, -12.5f), -5.0f, -135.0f);
+        std::cout << ">> [CAMARA 8]: Vista inicial de recorrido (Letras Uranden) activada." << std::endl;
+    }
+
+    // Tecla 9: Video C - Plaza de los Viejitos Danzantes (Estacion 2)
+    if (teclaPulsada(window, GLFW_KEY_9)) {
+        fijarCamara(glm::vec3(2.8f, 0.2f, 14.5f), -5.0f, 40.0f);
+        std::cout << ">> [CAMARA 9]: Vista enfocada a los Viejitos activada." << std::endl;
+    }
+
+    // Tecla 0: Video C - Canoa de los Mariposeros (Estacion 3)
+    if (teclaPulsada(window, GLFW_KEY_0)) {
+        fijarCamara(glm::vec3(-0.6f, -0.2f, 10.7f), -8.0f, -170.0f);
+        std::cout << ">> [CAMARA 0]: Vista enfocada a los Mariposeros activada." << std::endl;
+    }
+
+    // Tecla 5: Activar / Desactivar el Modo Dron (Toma orbital automatica)
+    static bool teclaDronPresionada = false;
+    if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) {
+        if (!teclaDronPresionada) {
+            modoDron = !modoDron;
+            teclaDronPresionada = true;
+            std::cout << (modoDron ? ">> [MODO DRON]: Activado. Volando en orbita..." : ">> [MODO DRON]: Desactivado. Control manual restaurado.") << std::endl;
+        }
+    }
+    else {
+        teclaDronPresionada = false;
     }
 
     // --- CONTROLES DE ANIMACIÓN DE MARIPOSEROS (A1) ---
@@ -892,6 +944,21 @@ void processInput(GLFWwindow* window) {
     if (teclaPulsada(window, GLFW_KEY_5)) {
         if (cargarKeyframesA1(ARCHIVO_KF_A1)) std::cout << "A1: cargados " << keyframesA1.size() << " cuadros" << std::endl;
         else std::cout << "A1: no se pudo cargar " << ARCHIVO_KF_A1 << std::endl;
+    }
+
+    // --- AJUSTE DE ESCALA DEL BASTON ---
+    if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) factorEscalaBaston = std::max(0.1f, factorEscalaBaston - 0.5f * deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) factorEscalaBaston += 0.5f * deltaTime;
+
+    static bool bPulsada = false;
+    if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
+        if (!bPulsada) {
+            bPulsada = true;
+            std::cout << ">> Factor Escala Baston: " << factorEscalaBaston << "f" << std::endl;
+        }
+    }
+    else {
+        bPulsada = false;
     }
 }
 
@@ -1135,6 +1202,30 @@ int main() {
 
         processInput(window);
 
+        // =========================================================================
+        // EFECTO POV CINEMATICO (HEAD BOBBING - PASOS AL CAMINAR)
+        // =========================================================================
+        static float tiempoCaminata = 0.0f;
+        // Detectar si el usuario esta presionando alguna tecla de movimiento
+        bool estaCaminando = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
+            glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
+            glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
+            glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
+
+        // Si camina y NO esta el dron activado, hacemos el cabeceo
+        if (estaCaminando && !modoDron) {
+            // REDUCIMOS DE 11.0f A 8.0f PARA PASOS MAS LENTOS
+            tiempoCaminata += deltaTime * 8.0f;
+            // REDUCIMOS DE 0.015f A 0.006f PARA UN REBOTE MAS SUAVE
+            camera.Position.y += std::sin(tiempoCaminata) * 0.006f;
+        }
+        else if (!modoDron) {
+            // Si se detiene, regresamos suavemente la cabeza a la altura humana (0.10f)
+            camera.Position.y = glm::mix(camera.Position.y, 0.10f, deltaTime * 5.0f);
+            tiempoCaminata = 0.0f;
+        }
+        // =========================================================================
+
         // --- VERIFICAR SI HAY ESTACIONES CERCA ---
         bool cercaDeAlguna = false;
         for (int i = 0; i < (int)estaciones.size(); i++) {
@@ -1160,7 +1251,32 @@ int main() {
 
         // --- ACTUALIZACION DE TIEMPOS DE ANIMACION ---
         float tiempoAnim = currentFrame;
+        // =========================================================================
+        // LOGICA DE VUELO DEL DRON AUTOMATICO
+        // =========================================================================
+        if (modoDron) {
+            float radioDron = 16.0f; // Que tan amplia es la vuelta circular
+            float velDron = 0.12f;   // Velocidad de giro (suave para que se vea bien en video)
 
+            // Calculamos altura con un seno para que "levite" suavemente arriba y abajo
+            float alturaDron = 7.5f + 1.2f * std::sin(currentFrame * 0.4f);
+
+            // El punto central del lago (el altar de cempasuchil)
+            glm::vec3 centroObjetivo(0.0f, 0.0f, 6.0f);
+
+            // Posicion circular automatica
+            float dronX = centroObjetivo.x + std::sin(currentFrame * velDron) * radioDron;
+            float dronZ = centroObjetivo.z + std::cos(currentFrame * velDron) * radioDron;
+            camera.Position = glm::vec3(dronX, alturaDron, dronZ);
+
+            // Calcular los angulos matematicos (Yaw y Pitch) para que siempre mire al centro
+            glm::vec3 direccion = glm::normalize(centroObjetivo - camera.Position);
+            camera.Pitch = glm::degrees(std::asin(direccion.y));
+            camera.Yaw = glm::degrees(std::atan2(direccion.z, direccion.x));
+
+            // Aplicamos los angulos a la camara
+            camera.ProcessMouseMovement(0.0f, 0.0f);
+        }
         if (animacionProcesionActiva) {
             tiempoProcesion += deltaTime;
         }
@@ -1528,26 +1644,26 @@ int main() {
         const glm::vec3 agarreDedosReposo(-0.351f, 0.765f, 0.126f);
         const glm::vec3 puntoEnBaston(-0.045f, 0.48f, -0.015f);
 
-        // Baston Viejito 1
+        // --- Baston Viejito 1 ---
         glm::vec3 agarreAnimado1 = glm::vec3(viejito1.movimientoManoDerecha() * glm::vec4(agarreDedosReposo, 1.0f));
         glm::mat4 modeloBaston1 = glm::translate(modeloViejito1, agarreAnimado1);
         float inclinacionZ1 = 8.0f + 1.5f * std::sin(relojCuerpo1 * 2.1f) + glm::clamp(bastonZ1 * 0.16f, -4.0f, 4.0f);
         float inclinacionX1 = glm::clamp(bastonX1 * 0.14f, -3.5f, 3.5f);
         modeloBaston1 = glm::rotate(modeloBaston1, glm::radians(inclinacionZ1), glm::vec3(0, 0, 1));
         modeloBaston1 = glm::rotate(modeloBaston1, glm::radians(inclinacionX1), glm::vec3(1, 0, 0));
-        modeloBaston1 = glm::scale(modeloBaston1, glm::vec3(escalaViejitos));
+        modeloBaston1 = glm::scale(modeloBaston1, glm::vec3(factorEscalaBaston));
         modeloBaston1 = glm::translate(modeloBaston1, -puntoEnBaston);
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(modeloBaston1));
         bastonViejito.Draw(miShader);
 
-        // Baston Viejito 2
+        // --- Baston Viejito 2 ---
         glm::vec3 agarreAnimado2 = glm::vec3(viejito2.movimientoManoDerecha() * glm::vec4(agarreDedosReposo, 1.0f));
         glm::mat4 modeloBaston2 = glm::translate(modeloViejito2, agarreAnimado2);
         float inclinacionZ2 = 8.0f + 1.5f * std::sin(relojCuerpo2 * 2.1f) + glm::clamp(bastonZ2 * 0.16f, -4.0f, 4.0f);
         float inclinacionX2 = glm::clamp(bastonX2 * 0.14f, -3.5f, 3.5f);
         modeloBaston2 = glm::rotate(modeloBaston2, glm::radians(inclinacionZ2), glm::vec3(0, 0, 1));
         modeloBaston2 = glm::rotate(modeloBaston2, glm::radians(inclinacionX2), glm::vec3(1, 0, 0));
-        modeloBaston2 = glm::scale(modeloBaston2, glm::vec3(escalaViejitos));
+        modeloBaston2 = glm::scale(modeloBaston2, glm::vec3(factorEscalaBaston));
         modeloBaston2 = glm::translate(modeloBaston2, -puntoEnBaston);
         glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(modeloBaston2));
         bastonViejito.Draw(miShader);
