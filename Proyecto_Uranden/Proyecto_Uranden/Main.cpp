@@ -2,6 +2,10 @@
 #define GLEW_STATIC
 #endif
 
+#ifdef _WIN32
+#include <windows.h> // <-- NUEVO: Necesario para acomodar la consola
+#endif
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -115,7 +119,6 @@ std::vector<glm::vec3> postesPuente2 = {
     glm::vec3(-7.18257f, -0.440817f, -12.4f),
     glm::vec3(-5.69923f, -0.426434f, -13.2347f)
 };
-int postePuente2Seleccionado = -1; // Selector activo para calibración
 
 // 4 reflectores para el lado opuesto del manantial
 std::vector<glm::vec3> lucesManantialOpuesto = {
@@ -662,6 +665,19 @@ int main() {
         glfwTerminate();
         return -1;
     }
+
+    // --- ACOMODAR VENTANAS AUTOMATICAMENTE ---
+#ifdef _WIN32
+    HWND consoleWindow = GetConsoleWindow();
+    if (consoleWindow) {
+        // Mueve la consola a la izquierda (x=0, y=0) y le da tamaño fijo (ancho=600, alto=600)
+        SetWindowPos(consoleWindow, NULL, 0, 0, 600, 600, SWP_NOZORDER);
+    }
+#endif
+    // Mueve la ventana del juego a la derecha (dejando espacio para la consola)
+    glfwSetWindowPos(window, 620, 50);
+    // -----------------------------------------
+
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
@@ -836,9 +852,6 @@ int main() {
     unsigned int texCedula3 = SOIL_load_OGL_texture("Models/textures/3_Procesion-de-Canoas.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
     unsigned int texCedula4 = SOIL_load_OGL_texture("Models/textures/4_El-rescate-de-los-manantiales.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
 
-    // --- TEXTURA PARA LA LEYENDA "PRESIONA E" ---
-    unsigned int texPressE = SOIL_load_OGL_texture("Models/textures/press_e.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
-
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
         deltaTime = currentFrame - lastFrame;
@@ -855,6 +868,20 @@ int main() {
             if (estaciones[i].interactuable) {
                 cercaDeAlguna = true;
             }
+        }
+
+        // --- LOGICA DE AVISO EN CONSOLA ---
+        static bool mensajeMostrado = false;
+        if (cercaDeAlguna && estacionActivaHUD == -1) {
+            // Si está cerca de una estación y el HUD NO está abierto, imprimimos una sola vez
+            if (!mensajeMostrado) {
+                std::cout << "\n>> [ESTACION CERCANA] Presiona la tecla 'E' para leer la informacion de la cedula." << std::endl;
+                mensajeMostrado = true;
+            }
+        }
+        else {
+            // Si el jugador se aleja o si abre el menú, permitimos que el mensaje se vuelva a mostrar la próxima vez
+            mensajeMostrado = false;
         }
 
         float tiempoAnim = currentFrame;
@@ -1361,8 +1388,8 @@ int main() {
         glBindVertexArray(0);
         glDepthFunc(GL_LESS);
 
-        // --- RENDERIZADO DEL HUD (MOCKUPS Y LEYENDA "E") ---
-        if (estacionActivaHUD != -1 || cercaDeAlguna) {
+        // --- RENDERIZADO DEL HUD (MOCKUPS) ---
+        if (estacionActivaHUD != -1) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDisable(GL_DEPTH_TEST);
@@ -1372,37 +1399,24 @@ int main() {
             glm::mat4 orthoProj = glm::ortho(0.0f, 800.0f, 0.0f, 600.0f);
             hudShader.setMat4("projection", orthoProj);
 
-            if (estacionActivaHUD != -1) {
-                // Dibujar el Mockup (Cédula de Información)
-                glm::mat4 orthoModel = glm::mat4(1.0f);
-                orthoModel = glm::translate(orthoModel, glm::vec3(80.0f, 120.0f, 0.0f));
-                orthoModel = glm::scale(orthoModel, glm::vec3(640.0f, 360.0f, 1.0f));
-                hudShader.setMat4("model", orthoModel);
+            // Dibujar el Mockup (Cédula de Información)
+            glm::mat4 orthoModel = glm::mat4(1.0f);
+            orthoModel = glm::translate(orthoModel, glm::vec3(80.0f, 120.0f, 0.0f));
+            orthoModel = glm::scale(orthoModel, glm::vec3(640.0f, 360.0f, 1.0f));
+            hudShader.setMat4("model", orthoModel);
 
-                glActiveTexture(GL_TEXTURE0);
-                if (estacionActivaHUD == 0) glBindTexture(GL_TEXTURE_2D, texCedula1);
-                else if (estacionActivaHUD == 1) glBindTexture(GL_TEXTURE_2D, texCedula2);
-                else if (estacionActivaHUD == 2) glBindTexture(GL_TEXTURE_2D, texCedula3);
-                else if (estacionActivaHUD == 3) glBindTexture(GL_TEXTURE_2D, texCedula4);
+            glActiveTexture(GL_TEXTURE0);
 
-                glBindVertexArray(hudVAO);
-                glDrawArrays(GL_TRIANGLES, 0, 6);
-                glBindVertexArray(0);
-            }
-            else if (cercaDeAlguna) {
-                // Dibujar el pequeño recuadro de "Presiona E"
-                glm::mat4 orthoModel = glm::mat4(1.0f);
-                orthoModel = glm::translate(orthoModel, glm::vec3(272.0f, 50.0f, 0.0f)); // Posicionado al centro inferior
-                orthoModel = glm::scale(orthoModel, glm::vec3(256.0f, 64.0f, 1.0f));
-                hudShader.setMat4("model", orthoModel);
+            // ASIGNACION DE MOCKUPS CORREGIDA
+            // 0: Embarcadero | 1: Islote (Letras) | 2: Plaza | 3: Altar
+            if (estacionActivaHUD == 0) glBindTexture(GL_TEXTURE_2D, texCedula1);
+            else if (estacionActivaHUD == 1) glBindTexture(GL_TEXTURE_2D, texCedula3);
+            else if (estacionActivaHUD == 2) glBindTexture(GL_TEXTURE_2D, texCedula2);
+            else if (estacionActivaHUD == 3) glBindTexture(GL_TEXTURE_2D, texCedula4);
 
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, texPressE);
-
-                glBindVertexArray(hudVAO);
-                glDrawArrays(GL_TRIANGLES, 0, 6);
-                glBindVertexArray(0);
-            }
+            glBindVertexArray(hudVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glBindVertexArray(0);
 
             glEnable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
