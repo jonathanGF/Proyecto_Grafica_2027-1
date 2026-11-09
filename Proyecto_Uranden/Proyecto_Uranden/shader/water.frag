@@ -2,46 +2,65 @@
 out vec4 FragColor;
 
 in vec3 FragPos;
+in vec2 TexCoord;
 in vec3 Normal;
-in vec2 TexCoords;
 
 uniform vec3 viewPos;
 uniform vec3 dirLightDir;
+uniform float time;
+uniform samplerCube skybox; 
 
-// Parámetros de la niebla atmosférica
 uniform vec3 fogColor;
 uniform float fogDensity;
 
+// Función matemática corregida: Frecuencias más bajas y cruce en diagonal (adiós ajedrez)
+vec3 calcularOndas(vec2 uv, float t) {
+    // Redujimos los multiplicadores de 15.0 a valores entre 1.5 y 2.5
+    // También mezclamos (uv.x + uv.y) para que el oleaje fluya en diagonal
+    float perturbacionX = sin((uv.x + uv.y * 0.5) * 2.2 + t * 1.5) * 0.05
+                        + sin((uv.x * 0.8 - uv.y) * 1.6 - t * 1.1) * 0.03;
+    
+    float perturbacionZ = cos((uv.y + uv.x * 0.3) * 2.4 + t * 1.4) * 0.05
+                        + cos((uv.y * 0.9 - uv.x) * 1.7 - t * 1.2) * 0.03;
+                        
+    return normalize(vec3(perturbacionX, 1.0, perturbacionZ));
+}
+
 void main()
 {
-    vec3 norm = normalize(Normal);
+    // 1. Generar distorsión procedural natural
+    vec3 normalModificada = calcularOndas(FragPos.xz, time);
+    
+    // 2. Vectores básicos
     vec3 viewDir = normalize(viewPos - FragPos);
-
-    // Tono azul oscuro del lago de Pátzcuaro en la noche
-    vec3 waterColor = vec3(0.04, 0.12, 0.22);
-
-    // Luz lunar difusa
     vec3 lightDir = normalize(-dirLightDir);
-    float diff = max(dot(norm, lightDir), 0.0);
+    
+    // 3. Efecto Fresnel (Refleja el cielo a lo lejos, transparente cerca)
+    float factorFresnel = pow(1.0 - max(dot(normalModificada, viewDir), 0.0), 3.0);
+    factorFresnel = clamp(factorFresnel + 0.1, 0.0, 1.0); 
+    
+    // 4. Reflejo del Skybox (Con distorsión del oleaje)
+    vec3 reflectDir = reflect(-viewDir, normalModificada);
+    vec3 colorReflejo = texture(skybox, reflectDir).rgb;
+    // Tinte cian/azulado oscuro para integrarlo con la noche
+    colorReflejo *= vec3(0.4, 0.6, 0.85);
 
-    // Reflejo especular concentrado y fino
+    // 5. Brillo de la luz sobre las olas (Highlights especulares más suaves)
     vec3 halfwayDir = normalize(lightDir + viewDir);
-    // Subimos el exponente de 32.0 a 256.0 para eliminar la mancha circular amplia
-    float spec = pow(max(dot(norm, halfwayDir), 0.0), 256.0);
+    float spec = pow(max(dot(normalModificada, halfwayDir), 0.0), 128.0); 
+    vec3 brilloSol = vec3(1.0, 0.95, 0.8) * spec * 1.2; 
 
-    vec3 ambient = 0.35 * waterColor;
-    vec3 diffuse = 0.50 * diff * waterColor;
-    // Atenuamos el destello especular para ambiente nocturno (antes 0.8)
-    vec3 specular = vec3(0.3, 0.4, 0.5) * spec * 0.25;
+    // 6. Color base del agua (Profundo)
+    vec3 colorBaseAgua = vec3(0.01, 0.12, 0.18);
 
-    vec3 result = ambient + diffuse + specular;
+    // 7. Mezclar todo
+    vec3 colorFinal = mix(colorBaseAgua, colorReflejo, factorFresnel) + brilloSol;
 
-    // Cálculo de niebla exponencial cuadrática para el agua
-    float dist = length(viewPos - FragPos);
-    float fogFactor = exp(-pow(dist * fogDensity, 2.0));
+    // 8. Aplicar la niebla atmosférica
+    float distance = length(viewPos - FragPos);
+    float fogFactor = exp(-pow((distance * fogDensity), 2.0));
     fogFactor = clamp(fogFactor, 0.0, 1.0);
+    colorFinal = mix(fogColor, colorFinal, fogFactor);
 
-    vec3 finalColor = mix(fogColor, result, fogFactor);
-
-    FragColor = vec4(finalColor, 1.0);
+    FragColor = vec4(colorFinal, 0.85);
 }

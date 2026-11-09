@@ -3,7 +3,7 @@
 #endif
 
 #ifdef _WIN32
-#include <windows.h> // <-- NUEVO: Necesario para acomodar la consola
+#include <windows.h>
 #endif
 
 #include <GL/glew.h>
@@ -25,6 +25,7 @@
 #include "Model.h"
 #include "AudioEngine.h"
 #include "Camera.h"
+#include "ViejitoRig.h" // <-- IMPORTAMOS LA CLASE DE LUIS
 
 // Fuerza el uso de la GPU dedicada en laptops con graficos hibridos (NVIDIA Optimus / AMD).
 // En equipos sin GPU dedicada el driver lo ignora.
@@ -64,6 +65,12 @@ int nbFrames = 0;
 
 // Multiplicador de luz ambiental global fijo
 float intensidadGlobal = 2.3284f;
+
+// --- VARIABLES FINALES PARA LOS VIEJITOS ---
+float escalaViejitos = 0.161891f;
+glm::vec3 offsetViejitos(0.352146f, -0.199837f, 0.954319f);
+float velAnimViejitos = 0.233078f;
+float rotacionViejitos = -109.633f;
 
 // =========================================================================
 // 2. DATOS DE ESCENA Y TRAYECTORIAS FIJAS
@@ -119,6 +126,7 @@ std::vector<glm::vec3> postesPuente2 = {
     glm::vec3(-7.18257f, -0.440817f, -12.4f),
     glm::vec3(-5.69923f, -0.426434f, -13.2347f)
 };
+int postePuente2Seleccionado = -1; // Selector activo para calibración
 
 // 4 reflectores para el lado opuesto del manantial
 std::vector<glm::vec3> lucesManantialOpuesto = {
@@ -531,6 +539,256 @@ void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices
 }
 
 // =========================================================================
+// NUEVA LOGICA: BAILE DE LOS VIEJITOS (LUIS)
+// =========================================================================
+static constexpr float PI_BAILE = 3.14159265358979323846f;
+
+enum EstadoBaile {
+    REPOSO = 0,
+    SALTO_IZQUIERDA = 1,
+    SALTO_DERECHA = 2,
+    SALTO_ADELANTE = 3,
+    RETROCESO_1 = 4,
+    RETROCESO_2 = 5,
+    RETROCESO_3 = 6,
+    RETROCESO_4 = 7,
+    PASO_DERECHO_BASTON = 8,
+    PASO_IZQUIERDO = 9,
+    ZAP_DERECHO_1 = 10,
+    ZAP_IZQUIERDO = 11,
+    ZAP_DERECHO_2 = 12,
+    REMATE = 13
+};
+
+// Duraciones base en segundos; el factor ritmo las acorta poco a poco.
+static const float DURACION_ESTADO[] = {
+    0.0f, 0.74f, 0.74f, 0.86f, 0.40f, 0.40f, 0.40f, 0.40f,
+    0.66f, 0.63f, 0.26f, 0.26f, 0.26f, 0.52f
+};
+
+static float limitar01(float x) {
+    return glm::clamp(x, 0.0f, 1.0f);
+}
+static float suavizar(float x) {
+    x = limitar01(x);
+    return x * x * (3.0f - 2.0f * x);
+}
+// Subida marcada, bajada rapida y breve apoyo: el pie no queda flotando.
+static float alzarPie(float t) {
+    if (t <= 0.53f) return suavizar(t / 0.53f);
+    if (t < 0.77f) return 1.0f - suavizar((t - 0.53f) / 0.24f);
+    return 0.0f;
+}
+// Amortiguacion breve justo cuando el pie vuelve a tocar el suelo.
+static float impacto(float t) {
+    if (t <= 0.77f || t >= 0.97f) return 0.0f;
+    return std::sin(PI_BAILE * (t - 0.77f) / 0.20f);
+}
+
+static PoseViejito posturaBase() {
+    PoseViejito p;
+    // Comienza casi erguido; la joroba aparece gradualmente durante el baile.
+    p.espalda = 8.0f;
+    p.espaldaMedia = 6.0f;
+    p.espaldaAlta = 4.0f;
+    p.cuello = -4.0f;
+
+    p.musloIzq = -5.0f; p.musloDer = -5.0f;
+    p.rodillaIzq = 15.0f; p.rodillaDer = 15.0f;
+    p.pieIzq = -6.0f; p.pieDer = -6.0f;
+
+    // Conservamos los angulos de brazos que ya NO atraviesan el torso.
+    p.brazoIzqX = -7.0f;
+    p.brazoIzqY = 7.0f;
+    p.brazoIzqZ = -4.0f;
+    p.codoIzqX = -4.0f;
+    p.codoIzqY = 2.0f;
+    p.codoIzqZ = -19.0f;
+    p.brazoDerX = 32.0f;
+    p.brazoDerZ = -18.0f;
+    p.codoDerX = 10.0f;
+    p.codoDerZ = -8.0f;
+    // Muneca ligeramente flexionada y dedos cerrados alrededor del palo.
+    p.munecaDerX = -5.0f;
+    p.agarreDerecho = 0.72f;
+    return p;
+}
+
+static PoseViejito calcularBaile(int estado, float t, float reloj,
+    float& posX, float& posY, float& posZ,
+    float& bastonZ, float& bastonX) {
+    PoseViejito p = posturaBase();
+    posX = posY = posZ = bastonZ = bastonX = 0.0f;
+    t = limitar01(t);
+
+    // Postura viva: se endereza y luego se encorva poco a poco.
+    const float flexion = suavizar(0.5f - 0.5f * std::cos(reloj * 1.45f));
+    p.espalda += 19.0f * flexion;
+    p.espaldaMedia += 14.0f * flexion;
+    p.espaldaAlta += 11.0f * flexion;
+    p.cuello -= 7.0f * flexion;
+    p.caderaX += 2.0f * flexion;
+    p.rodillaIzq += 3.5f * flexion;
+    p.rodillaDer += 3.5f * flexion;
+
+    // Mirada suave a ambos lados, sin girar ni tambalear todo el cuerpo.
+    p.cabezaY = 15.0f * std::sin(reloj * 0.92f)
+        + 3.0f * std::sin(reloj * 1.70f + 0.25f);
+    p.cuello += 2.0f * std::sin(reloj * 0.85f);
+    p.espaldaLateral += 0.55f * std::sin(reloj * 1.40f);
+    p.espaldaAlta += 1.0f * std::sin(reloj * 1.10f);
+
+    // Achaques constantes: temblor pequeno de rodillas.
+    p.rodillaIzq += 1.25f * std::sin(reloj * 22.0f);
+    p.rodillaDer += 1.25f * std::sin(reloj * 24.0f + 1.3f);
+
+    // El brazo con baston RESPIRA y responde al ritmo.
+    p.brazoDerX += 3.5f * std::sin(reloj * 1.8f);
+    p.brazoDerZ -= 2.0f * std::sin(reloj * 1.35f + 0.5f);
+    p.codoDerX += 7.0f * std::sin(reloj * 2.6f + 0.3f);
+    p.munecaDerX += 4.0f * std::sin(reloj * 2.2f);
+    p.munecaDerZ += 3.0f * std::sin(reloj * 1.9f + 0.4f);
+    p.agarreDerecho = 0.90f + 0.06f * std::sin(reloj * 2.7f);
+
+    float haciaLado = 0.0f;
+    if (estado == SALTO_IZQUIERDA) haciaLado = 14.0f;
+    else if (estado == SALTO_DERECHA) haciaLado = -14.0f;
+    else if (estado == SALTO_ADELANTE) haciaLado = 6.0f;
+    else if (estado >= RETROCESO_1 && estado <= RETROCESO_4)
+        haciaLado = ((estado - RETROCESO_1) % 2 == 0) ? 7.0f : -7.0f;
+    else if (estado == PASO_DERECHO_BASTON) haciaLado = -12.0f;
+    else if (estado == PASO_IZQUIERDO) haciaLado = 10.0f;
+    else if (estado == REMATE) haciaLado = -5.0f;
+    p.cabezaY += haciaLado * std::sin(PI_BAILE * t);
+    p.cabezaY = glm::clamp(p.cabezaY, -25.0f, 25.0f);
+
+    if (estado == REPOSO) return p;
+
+    if (estado == SALTO_IZQUIERDA || estado == SALTO_DERECHA ||
+        estado == SALTO_ADELANTE) {
+        float avance = suavizar((t - 0.16f) / 0.68f);
+        float vuelo = std::pow(std::max(0.0f, std::sin(PI_BAILE * t)), 1.2f);
+        float prepara = 1.0f - suavizar(t / 0.16f);
+        float aterriza = suavizar((t - 0.75f) / 0.11f) *
+            (1.0f - suavizar((t - 0.87f) / 0.13f));
+        posY = (estado == SALTO_ADELANTE ? 0.115f : 0.095f) * vuelo;
+        p.rodillaIzq += 8.0f * prepara + 12.0f * aterriza + 7.0f * vuelo;
+        p.rodillaDer += 8.0f * prepara + 12.0f * aterriza + 7.0f * vuelo;
+        p.musloIzq -= 7.0f * vuelo;
+        p.musloDer -= 7.0f * vuelo;
+        p.pieIzq += 4.0f * vuelo;
+        p.pieDer += 4.0f * vuelo;
+
+        p.brazoDerX -= 8.0f * vuelo;
+        p.brazoDerZ -= 3.0f * vuelo;
+        p.codoDerX += 16.0f * vuelo + 5.0f * aterriza;
+        p.munecaDerX -= 5.0f * vuelo;
+        if (estado == SALTO_IZQUIERDA) {
+            posX = -0.22f * avance;
+            p.musloIzqZ += 4.0f * vuelo;
+            bastonZ = 5.0f * vuelo;
+        }
+        else if (estado == SALTO_DERECHA) {
+            posX = -0.22f + 0.22f * avance;
+            p.musloDerZ -= 4.0f * vuelo;
+            bastonZ = -5.0f * vuelo;
+        }
+        else { // SALTO_ADELANTE
+            posZ = 0.18f * avance;
+            float golpeFinal = suavizar((t - 0.72f) / 0.10f) *
+                (1.0f - suavizar((t - 0.85f) / 0.15f));
+            p.rodillaIzq += 7.0f * golpeFinal;
+            p.rodillaDer += 7.0f * golpeFinal;
+            bastonX = 12.0f * vuelo - 9.0f * golpeFinal;
+        }
+    }
+    else if (estado >= RETROCESO_1 && estado <= RETROCESO_4) {
+        int numero = estado - RETROCESO_1;
+        float avance = suavizar(t);
+        float levanta = std::sin(PI_BAILE * t);
+        posZ = 0.18f - 0.045f * (numero + avance);
+        bool derecho = (numero % 2 == 0);
+        if (derecho) {
+            p.musloDer += 19.0f * levanta;
+            p.rodillaDer += 25.0f * levanta;
+            p.pieDer -= 10.0f * levanta;
+        }
+        else {
+            p.musloIzq += 19.0f * levanta;
+            p.rodillaIzq += 25.0f * levanta;
+            p.pieIzq -= 10.0f * levanta;
+        }
+        p.espaldaLateral += (derecho ? 2.2f : -2.2f) * levanta;
+        p.caderaZ += (derecho ? 1.2f : -1.2f) * levanta;
+        p.codoDerX += 7.0f * levanta;
+        p.brazoDerZ -= 2.5f * levanta;
+        bastonZ = (derecho ? -6.0f : 6.0f) * levanta;
+        posY = 0.008f * levanta;
+    }
+    else if (estado == PASO_DERECHO_BASTON) {
+        float levanta = alzarPie(t);
+        float pisoton = impacto(t);
+        p.musloDer -= 67.0f * levanta;
+        p.rodillaDer += 73.0f * levanta + 9.0f * pisoton;
+        p.pieDer -= 22.0f * levanta;
+        p.rodillaIzq += 5.0f * levanta; // pierna de apoyo
+        posY = 0.012f * levanta - 0.012f * pisoton;
+        p.brazoDerX -= 9.0f * levanta;
+        p.brazoDerZ -= 12.0f * levanta;
+        p.codoDerX += 18.0f * levanta;
+        p.munecaDerX -= 6.0f * levanta;
+        p.munecaDerZ += 5.0f * levanta;
+        bastonZ = 30.0f * levanta - 12.0f * pisoton;
+        bastonX = -15.0f * levanta + 8.0f * pisoton;
+    }
+    else if (estado == PASO_IZQUIERDO) {
+        float levanta = alzarPie(t);
+        float pisoton = impacto(t);
+        p.musloIzq -= 67.0f * levanta;
+        p.rodillaIzq += 73.0f * levanta + 9.0f * pisoton;
+        p.pieIzq -= 22.0f * levanta;
+        p.rodillaDer += 5.0f * levanta;
+        posY = 0.012f * levanta - 0.012f * pisoton;
+        bastonZ = -8.0f * levanta + 4.0f * pisoton;
+    }
+    else if (estado == ZAP_DERECHO_1 || estado == ZAP_IZQUIERDO ||
+        estado == ZAP_DERECHO_2) {
+        float levanta = alzarPie(t);
+        float pisoton = impacto(t);
+        bool derecho = (estado != ZAP_IZQUIERDO);
+        if (derecho) {
+            p.musloDer -= 38.0f * levanta;
+            p.rodillaDer += 42.0f * levanta + 5.0f * pisoton;
+            p.pieDer -= 12.0f * levanta;
+        }
+        else {
+            p.musloIzq -= 38.0f * levanta;
+            p.rodillaIzq += 42.0f * levanta + 5.0f * pisoton;
+            p.pieIzq -= 12.0f * levanta;
+        }
+        posY = 0.005f * levanta - 0.009f * pisoton;
+        bastonZ = (derecho ? 9.0f : -9.0f) * levanta;
+    }
+    else if (estado == REMATE) {
+        float levanta = alzarPie(t);
+        float pisoton = impacto(t);
+        p.musloIzq -= 14.0f * levanta;
+        p.musloDer -= 14.0f * levanta;
+        p.rodillaIzq += 15.0f * levanta + 12.0f * pisoton;
+        p.rodillaDer += 15.0f * levanta + 12.0f * pisoton;
+        p.pieIzq += 13.0f * levanta;
+        p.pieDer += 13.0f * levanta;
+        posY = 0.022f * levanta - 0.018f * pisoton;
+        p.espalda += 3.0f * pisoton;
+        p.codoDerX += 9.0f * levanta + 4.0f * pisoton;
+        p.munecaDerX -= 5.0f * levanta;
+        bastonZ = 17.0f * levanta - 14.0f * pisoton;
+        bastonX = -9.0f * levanta + 7.0f * pisoton;
+    }
+    return p;
+}
+
+// =========================================================================
 // 4. ENTRADA Y CONTROL 
 // =========================================================================
 
@@ -746,6 +1004,7 @@ int main() {
     Model modeloCanoa("Models/canoa.obj");
     Model modeloCanoaPro("Models/canoaPro.obj");
     Model modeloCopalera("Models/copalera.gltf");
+    Model bastonViejito("Models/Baston.obj");
     construirRutasProcesion();
 
     std::cout << "Cargando mapa completo de Uranden..." << std::endl;
@@ -764,6 +1023,23 @@ int main() {
     Model mMango("Models/mariposero/mango.obj");
     Model mAlaIzq("Models/mariposero/alaIzq.obj");
     Model mAlaDer("Models/mariposero/alaDer.obj");
+
+    // --- CARGAR LOS 2 VIEJITOS DE LUIS ---
+    std::cout << "Cargando Viejitos Danzantes..." << std::endl;
+    ViejitoRig viejito1("Models/ViejitoRig.bin", "Models/Textura_Viejito.png");
+    ViejitoRig viejito2("Models/ViejitoRig.bin", "Models/Textura_Viejito.png");
+    viejito1.animarPose(posturaBase());
+    viejito2.animarPose(posturaBase());
+
+    // Variables de animacion para los viejitos (se autoinicia)
+    int estadoBaile1 = SALTO_IZQUIERDA;
+    int estadoBaile2 = PASO_IZQUIERDO;
+    float tiempoEstado1 = 0.0f;
+    float tiempoEstado2 = 0.0f;
+    float ritmoViejitos = 1.0f;
+    int vueltasBaile = 0;
+    float relojCuerpo1 = 0.0f;
+    float relojCuerpo2 = 1.5f;
 
     if (cargarKeyframesA1(ARCHIVO_KF_A1))
         std::cout << "A1: keyframes cargados desde " << ARCHIVO_KF_A1 << std::endl;
@@ -873,17 +1149,16 @@ int main() {
         // --- LOGICA DE AVISO EN CONSOLA ---
         static bool mensajeMostrado = false;
         if (cercaDeAlguna && estacionActivaHUD == -1) {
-            // Si está cerca de una estación y el HUD NO está abierto, imprimimos una sola vez
             if (!mensajeMostrado) {
                 std::cout << "\n>> [ESTACION CERCANA] Presiona la tecla 'E' para leer la informacion de la cedula." << std::endl;
                 mensajeMostrado = true;
             }
         }
         else {
-            // Si el jugador se aleja o si abre el menú, permitimos que el mensaje se vuelva a mostrar la próxima vez
             mensajeMostrado = false;
         }
 
+        // --- ACTUALIZACION DE TIEMPOS DE ANIMACION ---
         float tiempoAnim = currentFrame;
 
         if (animacionProcesionActiva) {
@@ -902,6 +1177,46 @@ int main() {
             }
             evaluarRuta(r, d, posProc[k], yawProc[k]);
         }
+
+        // --- ACTUALIZAR ESTADO DEL BAILE DE LOS VIEJITOS ---
+        float deltaModificado = deltaTime * velAnimViejitos;
+
+        relojCuerpo1 += deltaModificado * ritmoViejitos;
+        relojCuerpo2 += deltaModificado * ritmoViejitos;
+        tiempoEstado1 += deltaModificado * ritmoViejitos;
+        tiempoEstado2 += deltaModificado * ritmoViejitos;
+
+        if (tiempoEstado1 >= DURACION_ESTADO[estadoBaile1]) {
+            tiempoEstado1 -= DURACION_ESTADO[estadoBaile1];
+            if (estadoBaile1 == REMATE) {
+                estadoBaile1 = SALTO_IZQUIERDA;
+                ++vueltasBaile;
+                ritmoViejitos = std::min(1.40f, 1.0f + 0.05f * vueltasBaile); // Aceleran poco a poco
+            }
+            else {
+                ++estadoBaile1;
+            }
+        }
+        if (tiempoEstado2 >= DURACION_ESTADO[estadoBaile2]) {
+            tiempoEstado2 -= DURACION_ESTADO[estadoBaile2];
+            if (estadoBaile2 == REMATE) {
+                estadoBaile2 = SALTO_IZQUIERDA;
+            }
+            else {
+                ++estadoBaile2;
+            }
+        }
+
+        float tBaile1 = tiempoEstado1 / DURACION_ESTADO[estadoBaile1];
+        float posX1 = 0.0f, posY1 = 0.0f, posZ1 = 0.0f, bastonZ1 = 0.0f, bastonX1 = 0.0f;
+        PoseViejito poseV1 = calcularBaile(estadoBaile1, tBaile1, relojCuerpo1, posX1, posY1, posZ1, bastonZ1, bastonX1);
+        viejito1.animarPose(poseV1);
+
+        float tBaile2 = tiempoEstado2 / DURACION_ESTADO[estadoBaile2];
+        float posX2 = 0.0f, posY2 = 0.0f, posZ2 = 0.0f, bastonZ2 = 0.0f, bastonX2 = 0.0f;
+        PoseViejito poseV2 = calcularBaile(estadoBaile2, tBaile2, relojCuerpo2, posX2, posY2, posZ2, bastonZ2, bastonX2);
+        viejito2.animarPose(poseV2);
+
 
         glm::vec3 fogColor = glm::vec3(0.012f, 0.018f, 0.035f);
         float fogDensity = 0.012f;
@@ -1184,6 +1499,59 @@ int main() {
         dibujarPurepecha(canoaA1, sepA1, 0.0f, false);
         dibujarPurepecha(canoaA1, -sepA1, 0.0f, true);
 
+        // --- DIBUJAR A LOS 2 VIEJITOS EN LA PLAZA (ESTACION 2) ---
+        // 1. Desactivamos el shader principal para evitar conflictos con el ViejitoRig
+        glUseProgram(0);
+
+        // 2. Activamos explicitamente la textura para que ViejitoRig la intercepte correctamente
+        glActiveTexture(GL_TEXTURE0);
+
+        // Viejito 1 (Lado izquierdo de la plaza)
+        glm::mat4 modeloViejito1 = glm::mat4(1.0f);
+        modeloViejito1 = glm::translate(modeloViejito1, glm::vec3(2.5f, -0.05f, 15.6f) + offsetViejitos);
+        modeloViejito1 = glm::translate(modeloViejito1, glm::vec3(posX1, posY1, posZ1));
+        modeloViejito1 = glm::rotate(modeloViejito1, glm::radians(-45.0f + rotacionViejitos), glm::vec3(0.0f, 1.0f, 0.0f));
+        modeloViejito1 = glm::scale(modeloViejito1, glm::vec3(escalaViejitos));
+        viejito1.dibujar(modeloViejito1, view, projection);
+
+        // Viejito 2 (Lado derecho de la plaza)
+        glm::mat4 modeloViejito2 = glm::mat4(1.0f);
+        modeloViejito2 = glm::translate(modeloViejito2, glm::vec3(3.2f, -0.05f, 16.0f) + offsetViejitos);
+        modeloViejito2 = glm::translate(modeloViejito2, glm::vec3(posX2, posY2, posZ2));
+        modeloViejito2 = glm::rotate(modeloViejito2, glm::radians(-90.0f + rotacionViejitos), glm::vec3(0.0f, 1.0f, 0.0f));
+        modeloViejito2 = glm::scale(modeloViejito2, glm::vec3(escalaViejitos));
+        viejito2.dibujar(modeloViejito2, view, projection);
+
+        // Volver al shader normal para dibujar los bastones de los viejitos
+        miShader.use();
+
+        const glm::vec3 agarreDedosReposo(-0.351f, 0.765f, 0.126f);
+        const glm::vec3 puntoEnBaston(-0.045f, 0.48f, -0.015f);
+
+        // Baston Viejito 1
+        glm::vec3 agarreAnimado1 = glm::vec3(viejito1.movimientoManoDerecha() * glm::vec4(agarreDedosReposo, 1.0f));
+        glm::mat4 modeloBaston1 = glm::translate(modeloViejito1, agarreAnimado1);
+        float inclinacionZ1 = 8.0f + 1.5f * std::sin(relojCuerpo1 * 2.1f) + glm::clamp(bastonZ1 * 0.16f, -4.0f, 4.0f);
+        float inclinacionX1 = glm::clamp(bastonX1 * 0.14f, -3.5f, 3.5f);
+        modeloBaston1 = glm::rotate(modeloBaston1, glm::radians(inclinacionZ1), glm::vec3(0, 0, 1));
+        modeloBaston1 = glm::rotate(modeloBaston1, glm::radians(inclinacionX1), glm::vec3(1, 0, 0));
+        modeloBaston1 = glm::scale(modeloBaston1, glm::vec3(escalaViejitos));
+        modeloBaston1 = glm::translate(modeloBaston1, -puntoEnBaston);
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(modeloBaston1));
+        bastonViejito.Draw(miShader);
+
+        // Baston Viejito 2
+        glm::vec3 agarreAnimado2 = glm::vec3(viejito2.movimientoManoDerecha() * glm::vec4(agarreDedosReposo, 1.0f));
+        glm::mat4 modeloBaston2 = glm::translate(modeloViejito2, agarreAnimado2);
+        float inclinacionZ2 = 8.0f + 1.5f * std::sin(relojCuerpo2 * 2.1f) + glm::clamp(bastonZ2 * 0.16f, -4.0f, 4.0f);
+        float inclinacionX2 = glm::clamp(bastonX2 * 0.14f, -3.5f, 3.5f);
+        modeloBaston2 = glm::rotate(modeloBaston2, glm::radians(inclinacionZ2), glm::vec3(0, 0, 1));
+        modeloBaston2 = glm::rotate(modeloBaston2, glm::radians(inclinacionX2), glm::vec3(1, 0, 0));
+        modeloBaston2 = glm::scale(modeloBaston2, glm::vec3(escalaViejitos));
+        modeloBaston2 = glm::translate(modeloBaston2, -puntoEnBaston);
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(modeloBaston2));
+        bastonViejito.Draw(miShader);
+
         // --- Render Focos Físicos (Geometría) ---
         glUniform1i(ubicacionUniform(miShader.ID, "useTexture"), false);
         glUniform1i(ubicacionUniform(miShader.ID, "isLightSource"), true);
@@ -1361,11 +1729,18 @@ int main() {
         glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniform3fv(ubicacionUniform(waterShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
+        // Le pasamos la direccion de la luz (falsa luna/sol) para el brillo del agua
         glUniform3f(ubicacionUniform(waterShader.ID, "dirLightDir"), -0.2f, -1.0f, -0.3f);
 
         glUniform1f(ubicacionUniform(waterShader.ID, "time"), currentFrame * 0.08f);
         glUniform3fv(ubicacionUniform(waterShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
         glUniform1f(ubicacionUniform(waterShader.ID, "fogDensity"), fogDensity);
+
+        // --- NUEVO: Pasar el Skybox al agua para hacer reflejos HD ---
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+        glUniform1i(ubicacionUniform(waterShader.ID, "skybox"), 1);
+        // -------------------------------------------------------------
 
         glm::mat4 waterModel = glm::mat4(1.0f);
         waterModel = glm::translate(waterModel, glm::vec3(0.0f, -0.88f, 0.0f));
@@ -1408,11 +1783,10 @@ int main() {
             glActiveTexture(GL_TEXTURE0);
 
             // ASIGNACION DE MOCKUPS CORREGIDA
-            // 0: Embarcadero | 1: Islote (Letras) | 2: Plaza | 3: Altar
             if (estacionActivaHUD == 0) glBindTexture(GL_TEXTURE_2D, texCedula1);
-            else if (estacionActivaHUD == 1) glBindTexture(GL_TEXTURE_2D, texCedula3);
+            else if (estacionActivaHUD == 1) glBindTexture(GL_TEXTURE_2D, texCedula4);
             else if (estacionActivaHUD == 2) glBindTexture(GL_TEXTURE_2D, texCedula2);
-            else if (estacionActivaHUD == 3) glBindTexture(GL_TEXTURE_2D, texCedula4);
+            else if (estacionActivaHUD == 3) glBindTexture(GL_TEXTURE_2D, texCedula3);
 
             glBindVertexArray(hudVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);

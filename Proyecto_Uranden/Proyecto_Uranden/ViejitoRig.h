@@ -145,7 +145,7 @@ public:
             return;
         }
 
-        textura = SOIL_load_OGL_texture(rutaTextura, SOIL_LOAD_AUTO, SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS);
+        textura = SOIL_load_OGL_texture(rutaTextura, SOIL_LOAD_AUTO, SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS | SOIL_FLAG_INVERT_Y);
         if (!textura)
             std::cerr << "AVISO VIEJITO RIG: No se cargo textura: " << rutaTextura << std::endl;
         listo = true;
