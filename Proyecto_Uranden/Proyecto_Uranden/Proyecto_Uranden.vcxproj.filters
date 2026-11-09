@@ -61,7 +61,15 @@
     <ClInclude Include="AudioEngine.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
-<<<<<<< HEAD
+    <ClInclude Include="Camera.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
+    <ClInclude Include="Shader.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
+    <ClInclude Include="Model.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
     <ClInclude Include="ViejitoRig.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>

@@ -2,6 +2,10 @@
 #define GLEW_STATIC
 #endif
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -10,6 +14,7 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <unordered_map>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -20,6 +25,26 @@
 #include "Model.h"
 #include "AudioEngine.h"
 #include "Camera.h"
+#include "ViejitoRig.h" // <-- IMPORTAMOS LA CLASE DE LUIS
+
+// Fuerza el uso de la GPU dedicada en laptops con graficos hibridos (NVIDIA Optimus / AMD).
+// En equipos sin GPU dedicada el driver lo ignora.
+extern "C" {
+    __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+
+// Cache de ubicaciones de uniforms: glGetUniformLocation se consulta una sola vez por nombre
+// y despues se reutiliza (antes se llamaba ~350 veces por cuadro).
+GLint ubicacionUniform(GLuint programa, const std::string& nombre) {
+    static std::unordered_map<GLuint, std::unordered_map<std::string, GLint>> cache;
+    auto& tabla = cache[programa];
+    auto it = tabla.find(nombre);
+    if (it != tabla.end()) return it->second;
+    GLint loc = glGetUniformLocation(programa, nombre.c_str());
+    tabla.emplace(nombre, loc);
+    return loc;
+}
 
 // =========================================================================
 // 1. CONSTANTES Y CONFIGURACIÓN GLOBAL
@@ -38,8 +63,17 @@ float lastFrame = 0.0f;
 double lastFpsTime = 0.0;
 int nbFrames = 0;
 
+// Multiplicador de luz ambiental global fijo
+float intensidadGlobal = 2.3284f;
+
+// --- VARIABLES FINALES PARA LOS VIEJITOS ---
+float escalaViejitos = 0.161891f;
+glm::vec3 offsetViejitos(0.352146f, -0.199837f, 0.954319f);
+float velAnimViejitos = 0.233078f;
+float rotacionViejitos = -109.633f;
+
 // =========================================================================
-// 2. DATOS DE ESCENA Y TRAYECTORIAS
+// 2. DATOS DE ESCENA Y TRAYECTORIAS FIJAS
 // =========================================================================
 
 glm::vec3 offsetMuelle = glm::vec3(-3.5f, 0.0f, 0.0f);
@@ -77,13 +111,22 @@ std::vector<glm::vec3> lucesLetrero = {
     glm::vec3(0.0f,     3.68036f,  -14.6803f)
 };
 
-// 4 postes exactos del puente de madera
+// 4 postes exactos del PRIMER puente de madera
 std::vector<glm::vec3> postesPuente = {
     glm::vec3(-0.254487f, -0.363107f, 16.8868f),
     glm::vec3(0.719089f, -0.35674f,  16.8865f),
     glm::vec3(-0.253564f, -0.370363f, 16.6411f),
     glm::vec3(0.726335f, -0.359537f, 16.64f)
 };
+
+// --- Postes SEGUNDO puente de madera (Valores fijos calibrados) ---
+std::vector<glm::vec3> postesPuente2 = {
+    glm::vec3(-7.35653f, -0.430664f, -12.7874f),
+    glm::vec3(-5.88413f, -0.426269f, -13.6162f),
+    glm::vec3(-7.18257f, -0.440817f, -12.4f),
+    glm::vec3(-5.69923f, -0.426434f, -13.2347f)
+};
+int postePuente2Seleccionado = -1; // Selector activo para calibración
 
 // 4 reflectores para el lado opuesto del manantial
 std::vector<glm::vec3> lucesManantialOpuesto = {
@@ -100,7 +143,7 @@ struct FocoEstructura {
     float yaw;
 };
 
-// Valores fijos calibrados de las 4 LUCES de URANDÉN
+// Valores fijos calibrados de los 4 focos originales de URANDÉN
 std::vector<FocoEstructura> focosUranden = {
     { glm::vec3(0.472333f, -0.277844f, -11.3845f), 0.0f, 12.621f },
     { glm::vec3(1.043f, -0.351215f, -11.5507f), 0.0f, 19.0009f },
@@ -108,20 +151,16 @@ std::vector<FocoEstructura> focosUranden = {
     { glm::vec3(2.07332f, -0.383588f, -11.8695f), 0.0f, 16.9766f }
 };
 
-// Valores calibrados de las 4 CAJITAS BRILLANTES (Geometría del foco frente a las letras)
+// Valores fijos calibrados de los NUEVOS 4 FOCOS PARA EL FRENTE DE LAS LETRAS
 std::vector<FocoEstructura> focosLetras = {
-    { glm::vec3(0.472333f, -0.277844f, -10.0f), 0.0f, 0.0f },
-    { glm::vec3(1.043f, -0.351215f, -10.0f), 0.0f, 0.0f },
-    { glm::vec3(1.5f, -0.354501f, -10.0f), 0.0f, 0.0f },
-    { glm::vec3(2.07332f, -0.383588f, -10.0f), 0.0f, 0.0f }
+    { glm::vec3(0.604192f, -0.277844f, -10.8625f), 0.0f, 14.057f },
+    { glm::vec3(1.19124f, -0.321721f, -11.0867f), 0.0f, 17.422f },
+    { glm::vec3(1.64225f, -0.333041f, -11.2188f), 0.0f, 16.8869f },
+    { glm::vec3(2.20184f, -0.383588f, -11.415f), 0.0f, 16.8951f }
 };
 
-int orillaSeleccionada = -1;
-int letreroSeleccionado = -1;
-int postePuenteSeleccionado = -1;
-int reflectorOpuestoSeleccionado = -1;
-int focoUrandenSeleccionado = -1;
-int focoLetrasSeleccionado = -1;
+int estacionActivaHUD = -1;
+bool eKeyPressed = false;
 
 // Trayectoria con segmentos de longitud homogénea
 std::vector<glm::vec3> puntosCircuito = {
@@ -139,11 +178,19 @@ std::vector<glm::vec3> puntosCircuito = {
     glm::vec3(0.0f, -0.65f, -0.6f)
 };
 
-// Escalas definitivas calibradas
-float escalaCanoaA1 = 1.78327f;
-const float escalaCanoaProcesion = 0.462468f;
+// =========================================================================
+// VARIABLES GLOBALES DE ESCALA, ALTURA Y MARIPOSEROS (Fijas)
+// =========================================================================
+float escalaCanoaA1 = 0.934082f;
+float escalaCanoaProcesion = 0.205165f;
+float alturaCanoasProcesion = -0.210887f;
 
-// --- VALORES CALIBRADOS DE LA COPALERA (FIJOS) ---
+float escalaA1 = 0.31759f;
+const float SEPARACION_PESCADOR = 0.225f;
+float pisoCanoaA1 = -0.07f;
+const float PIES_A_ORIGEN = 0.43f;
+
+// --- VALORES CALIBRADOS DE LA COPALERA ---
 float escalaCopalera = 0.85f;
 glm::vec3 offsetCopalera = glm::vec3(0.0f, 0.331801f, 0.05f);
 glm::vec3 offsetFuegoSahumador = glm::vec3(0.0f, 0.45f, 0.25f);
@@ -151,6 +198,24 @@ glm::vec3 offsetFuegoSahumador = glm::vec3(0.0f, 0.45f, 0.25f);
 // Luces del interior de la canoa (Proa y Popa)
 glm::vec3 offsetLuzProa = glm::vec3(0.0f, 0.30f, 2.5f);
 glm::vec3 offsetLuzPopa = glm::vec3(0.0f, 0.30f, -2.5f);
+
+// =========================================================================
+// DATOS DEL HUD Y ESTACIONES
+// =========================================================================
+struct Estacion {
+    glm::vec3 posicion;
+    float radioDeteccion;
+    bool interactuable;
+    bool activa;
+};
+
+// ESTACIONES CALIBRADAS
+std::vector<Estacion> estaciones = {
+    {glm::vec3(-1.40175f, 0.0f, 1.49381f), 3.0f, false, false},  // 0: Embarcadero
+    {glm::vec3(1.61685f, 0.0f, -9.52137f), 3.0f, false, false},  // 1: Islote de Uranden
+    {glm::vec3(2.15513f, 0.0f, 15.4634f), 3.0f, false, false},   // 2: Plaza
+    {glm::vec3(0.611198f, 0.0f, 6.4615f), 3.0f, false, false}    // 3: Altar central
+};
 
 // =========================================================================
 // CONTROL Y APARCAMIENTO DE LA PROCESIÓN
@@ -245,7 +310,10 @@ bool eKeyPressed = false;
 // =========================================================================
 glm::vec3 posCanoaA1 = glm::vec3(-1.87317f, -0.806756f, 10.7197f);
 float yawCanoaA1 = 101.509f;
-bool calibrandoA1 = false;
+bool reproduciendoA1 = true;
+float tiempoAnimA1 = 0.0f;
+const float DURACION_TRAMO_A1 = 1.0f;
+const char* ARCHIVO_KF_A1 = "animaciones/A1_mariposeros.txt";
 
 const glm::vec3 P_PELVIS = glm::vec3(-0.0017f, -0.0732f, -0.0031f);
 const glm::vec3 P_HOMBRO_DER = glm::vec3(-0.168f, 0.1732f, -0.04062f);
@@ -312,10 +380,6 @@ std::vector<PoseA1> keyframesA1 = {
     {  0,  0,  0,  40,  -5, 20,  35, -20, 45,   70,   0, -25 },
     {  0,  0,  0,   0,   0,  0,   0,   0,  0,    0,   0,   0 }
 };
-bool reproduciendoA1 = true;
-float tiempoAnimA1 = 0.0f;
-const float DURACION_TRAMO_A1 = 1.0f;
-const char* ARCHIVO_KF_A1 = "animaciones/A1_mariposeros.txt";
 
 PoseA1 interpolarPose(const PoseA1& a, const PoseA1& b, float t) {
     PoseA1 r;
@@ -363,11 +427,6 @@ glm::mat4 rotarEnPivote(const glm::mat4& M, const glm::vec3& pivote, float grado
     r = glm::rotate(r, glm::radians(grados), eje);
     return glm::translate(r, -pivote);
 }
-
-float escalaA1 = 0.462976f;
-const float SEPARACION_PESCADOR = 0.225f;
-float pisoCanoaA1 = -0.07f;
-const float PIES_A_ORIGEN = 0.43f;
 
 // =========================================================================
 // 3. FUNCIONES AUXILIARES
@@ -497,7 +556,257 @@ void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices
 }
 
 // =========================================================================
-// 4. ENTRADA Y CONTROL DE CALIBRACIÓN
+// NUEVA LOGICA: BAILE DE LOS VIEJITOS (LUIS)
+// =========================================================================
+static constexpr float PI_BAILE = 3.14159265358979323846f;
+
+enum EstadoBaile {
+    REPOSO = 0,
+    SALTO_IZQUIERDA = 1,
+    SALTO_DERECHA = 2,
+    SALTO_ADELANTE = 3,
+    RETROCESO_1 = 4,
+    RETROCESO_2 = 5,
+    RETROCESO_3 = 6,
+    RETROCESO_4 = 7,
+    PASO_DERECHO_BASTON = 8,
+    PASO_IZQUIERDO = 9,
+    ZAP_DERECHO_1 = 10,
+    ZAP_IZQUIERDO = 11,
+    ZAP_DERECHO_2 = 12,
+    REMATE = 13
+};
+
+// Duraciones base en segundos; el factor ritmo las acorta poco a poco.
+static const float DURACION_ESTADO[] = {
+    0.0f, 0.74f, 0.74f, 0.86f, 0.40f, 0.40f, 0.40f, 0.40f,
+    0.66f, 0.63f, 0.26f, 0.26f, 0.26f, 0.52f
+};
+
+static float limitar01(float x) {
+    return glm::clamp(x, 0.0f, 1.0f);
+}
+static float suavizar(float x) {
+    x = limitar01(x);
+    return x * x * (3.0f - 2.0f * x);
+}
+// Subida marcada, bajada rapida y breve apoyo: el pie no queda flotando.
+static float alzarPie(float t) {
+    if (t <= 0.53f) return suavizar(t / 0.53f);
+    if (t < 0.77f) return 1.0f - suavizar((t - 0.53f) / 0.24f);
+    return 0.0f;
+}
+// Amortiguacion breve justo cuando el pie vuelve a tocar el suelo.
+static float impacto(float t) {
+    if (t <= 0.77f || t >= 0.97f) return 0.0f;
+    return std::sin(PI_BAILE * (t - 0.77f) / 0.20f);
+}
+
+static PoseViejito posturaBase() {
+    PoseViejito p;
+    // Comienza casi erguido; la joroba aparece gradualmente durante el baile.
+    p.espalda = 8.0f;
+    p.espaldaMedia = 6.0f;
+    p.espaldaAlta = 4.0f;
+    p.cuello = -4.0f;
+
+    p.musloIzq = -5.0f; p.musloDer = -5.0f;
+    p.rodillaIzq = 15.0f; p.rodillaDer = 15.0f;
+    p.pieIzq = -6.0f; p.pieDer = -6.0f;
+
+    // Conservamos los angulos de brazos que ya NO atraviesan el torso.
+    p.brazoIzqX = -7.0f;
+    p.brazoIzqY = 7.0f;
+    p.brazoIzqZ = -4.0f;
+    p.codoIzqX = -4.0f;
+    p.codoIzqY = 2.0f;
+    p.codoIzqZ = -19.0f;
+    p.brazoDerX = 32.0f;
+    p.brazoDerZ = -18.0f;
+    p.codoDerX = 10.0f;
+    p.codoDerZ = -8.0f;
+    // Muneca ligeramente flexionada y dedos cerrados alrededor del palo.
+    p.munecaDerX = -5.0f;
+    p.agarreDerecho = 0.72f;
+    return p;
+}
+
+static PoseViejito calcularBaile(int estado, float t, float reloj,
+    float& posX, float& posY, float& posZ,
+    float& bastonZ, float& bastonX) {
+    PoseViejito p = posturaBase();
+    posX = posY = posZ = bastonZ = bastonX = 0.0f;
+    t = limitar01(t);
+
+    // Postura viva: se endereza y luego se encorva poco a poco.
+    const float flexion = suavizar(0.5f - 0.5f * std::cos(reloj * 1.45f));
+    p.espalda += 19.0f * flexion;
+    p.espaldaMedia += 14.0f * flexion;
+    p.espaldaAlta += 11.0f * flexion;
+    p.cuello -= 7.0f * flexion;
+    p.caderaX += 2.0f * flexion;
+    p.rodillaIzq += 3.5f * flexion;
+    p.rodillaDer += 3.5f * flexion;
+
+    // Mirada suave a ambos lados, sin girar ni tambalear todo el cuerpo.
+    p.cabezaY = 15.0f * std::sin(reloj * 0.92f)
+        + 3.0f * std::sin(reloj * 1.70f + 0.25f);
+    p.cuello += 2.0f * std::sin(reloj * 0.85f);
+    p.espaldaLateral += 0.55f * std::sin(reloj * 1.40f);
+    p.espaldaAlta += 1.0f * std::sin(reloj * 1.10f);
+
+    // Achaques constantes: temblor pequeno de rodillas.
+    p.rodillaIzq += 1.25f * std::sin(reloj * 22.0f);
+    p.rodillaDer += 1.25f * std::sin(reloj * 24.0f + 1.3f);
+
+    // El brazo con baston RESPIRA y responde al ritmo.
+    p.brazoDerX += 3.5f * std::sin(reloj * 1.8f);
+    p.brazoDerZ -= 2.0f * std::sin(reloj * 1.35f + 0.5f);
+    p.codoDerX += 7.0f * std::sin(reloj * 2.6f + 0.3f);
+    p.munecaDerX += 4.0f * std::sin(reloj * 2.2f);
+    p.munecaDerZ += 3.0f * std::sin(reloj * 1.9f + 0.4f);
+    p.agarreDerecho = 0.90f + 0.06f * std::sin(reloj * 2.7f);
+
+    float haciaLado = 0.0f;
+    if (estado == SALTO_IZQUIERDA) haciaLado = 14.0f;
+    else if (estado == SALTO_DERECHA) haciaLado = -14.0f;
+    else if (estado == SALTO_ADELANTE) haciaLado = 6.0f;
+    else if (estado >= RETROCESO_1 && estado <= RETROCESO_4)
+        haciaLado = ((estado - RETROCESO_1) % 2 == 0) ? 7.0f : -7.0f;
+    else if (estado == PASO_DERECHO_BASTON) haciaLado = -12.0f;
+    else if (estado == PASO_IZQUIERDO) haciaLado = 10.0f;
+    else if (estado == REMATE) haciaLado = -5.0f;
+    p.cabezaY += haciaLado * std::sin(PI_BAILE * t);
+    p.cabezaY = glm::clamp(p.cabezaY, -25.0f, 25.0f);
+
+    if (estado == REPOSO) return p;
+
+    if (estado == SALTO_IZQUIERDA || estado == SALTO_DERECHA ||
+        estado == SALTO_ADELANTE) {
+        float avance = suavizar((t - 0.16f) / 0.68f);
+        float vuelo = std::pow(std::max(0.0f, std::sin(PI_BAILE * t)), 1.2f);
+        float prepara = 1.0f - suavizar(t / 0.16f);
+        float aterriza = suavizar((t - 0.75f) / 0.11f) *
+            (1.0f - suavizar((t - 0.87f) / 0.13f));
+        posY = (estado == SALTO_ADELANTE ? 0.115f : 0.095f) * vuelo;
+        p.rodillaIzq += 8.0f * prepara + 12.0f * aterriza + 7.0f * vuelo;
+        p.rodillaDer += 8.0f * prepara + 12.0f * aterriza + 7.0f * vuelo;
+        p.musloIzq -= 7.0f * vuelo;
+        p.musloDer -= 7.0f * vuelo;
+        p.pieIzq += 4.0f * vuelo;
+        p.pieDer += 4.0f * vuelo;
+
+        p.brazoDerX -= 8.0f * vuelo;
+        p.brazoDerZ -= 3.0f * vuelo;
+        p.codoDerX += 16.0f * vuelo + 5.0f * aterriza;
+        p.munecaDerX -= 5.0f * vuelo;
+        if (estado == SALTO_IZQUIERDA) {
+            posX = -0.22f * avance;
+            p.musloIzqZ += 4.0f * vuelo;
+            bastonZ = 5.0f * vuelo;
+        }
+        else if (estado == SALTO_DERECHA) {
+            posX = -0.22f + 0.22f * avance;
+            p.musloDerZ -= 4.0f * vuelo;
+            bastonZ = -5.0f * vuelo;
+        }
+        else { // SALTO_ADELANTE
+            posZ = 0.18f * avance;
+            float golpeFinal = suavizar((t - 0.72f) / 0.10f) *
+                (1.0f - suavizar((t - 0.85f) / 0.15f));
+            p.rodillaIzq += 7.0f * golpeFinal;
+            p.rodillaDer += 7.0f * golpeFinal;
+            bastonX = 12.0f * vuelo - 9.0f * golpeFinal;
+        }
+    }
+    else if (estado >= RETROCESO_1 && estado <= RETROCESO_4) {
+        int numero = estado - RETROCESO_1;
+        float avance = suavizar(t);
+        float levanta = std::sin(PI_BAILE * t);
+        posZ = 0.18f - 0.045f * (numero + avance);
+        bool derecho = (numero % 2 == 0);
+        if (derecho) {
+            p.musloDer += 19.0f * levanta;
+            p.rodillaDer += 25.0f * levanta;
+            p.pieDer -= 10.0f * levanta;
+        }
+        else {
+            p.musloIzq += 19.0f * levanta;
+            p.rodillaIzq += 25.0f * levanta;
+            p.pieIzq -= 10.0f * levanta;
+        }
+        p.espaldaLateral += (derecho ? 2.2f : -2.2f) * levanta;
+        p.caderaZ += (derecho ? 1.2f : -1.2f) * levanta;
+        p.codoDerX += 7.0f * levanta;
+        p.brazoDerZ -= 2.5f * levanta;
+        bastonZ = (derecho ? -6.0f : 6.0f) * levanta;
+        posY = 0.008f * levanta;
+    }
+    else if (estado == PASO_DERECHO_BASTON) {
+        float levanta = alzarPie(t);
+        float pisoton = impacto(t);
+        p.musloDer -= 67.0f * levanta;
+        p.rodillaDer += 73.0f * levanta + 9.0f * pisoton;
+        p.pieDer -= 22.0f * levanta;
+        p.rodillaIzq += 5.0f * levanta; // pierna de apoyo
+        posY = 0.012f * levanta - 0.012f * pisoton;
+        p.brazoDerX -= 9.0f * levanta;
+        p.brazoDerZ -= 12.0f * levanta;
+        p.codoDerX += 18.0f * levanta;
+        p.munecaDerX -= 6.0f * levanta;
+        p.munecaDerZ += 5.0f * levanta;
+        bastonZ = 30.0f * levanta - 12.0f * pisoton;
+        bastonX = -15.0f * levanta + 8.0f * pisoton;
+    }
+    else if (estado == PASO_IZQUIERDO) {
+        float levanta = alzarPie(t);
+        float pisoton = impacto(t);
+        p.musloIzq -= 67.0f * levanta;
+        p.rodillaIzq += 73.0f * levanta + 9.0f * pisoton;
+        p.pieIzq -= 22.0f * levanta;
+        p.rodillaDer += 5.0f * levanta;
+        posY = 0.012f * levanta - 0.012f * pisoton;
+        bastonZ = -8.0f * levanta + 4.0f * pisoton;
+    }
+    else if (estado == ZAP_DERECHO_1 || estado == ZAP_IZQUIERDO ||
+        estado == ZAP_DERECHO_2) {
+        float levanta = alzarPie(t);
+        float pisoton = impacto(t);
+        bool derecho = (estado != ZAP_IZQUIERDO);
+        if (derecho) {
+            p.musloDer -= 38.0f * levanta;
+            p.rodillaDer += 42.0f * levanta + 5.0f * pisoton;
+            p.pieDer -= 12.0f * levanta;
+        }
+        else {
+            p.musloIzq -= 38.0f * levanta;
+            p.rodillaIzq += 42.0f * levanta + 5.0f * pisoton;
+            p.pieIzq -= 12.0f * levanta;
+        }
+        posY = 0.005f * levanta - 0.009f * pisoton;
+        bastonZ = (derecho ? 9.0f : -9.0f) * levanta;
+    }
+    else if (estado == REMATE) {
+        float levanta = alzarPie(t);
+        float pisoton = impacto(t);
+        p.musloIzq -= 14.0f * levanta;
+        p.musloDer -= 14.0f * levanta;
+        p.rodillaIzq += 15.0f * levanta + 12.0f * pisoton;
+        p.rodillaDer += 15.0f * levanta + 12.0f * pisoton;
+        p.pieIzq += 13.0f * levanta;
+        p.pieDer += 13.0f * levanta;
+        posY = 0.022f * levanta - 0.018f * pisoton;
+        p.espalda += 3.0f * pisoton;
+        p.codoDerX += 9.0f * levanta + 4.0f * pisoton;
+        p.munecaDerX -= 5.0f * levanta;
+        bastonZ = 17.0f * levanta - 14.0f * pisoton;
+        bastonX = -9.0f * levanta + 7.0f * pisoton;
+    }
+    return p;
+}
+
+// =========================================================================
+// 4. ENTRADA Y CONTROL 
 // =========================================================================
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -541,10 +850,10 @@ void processInput(GLFWwindow* window) {
             for (int i = 0; i < (int)estaciones.size(); i++) {
                 if (estaciones[i].interactuable) {
                     if (estacionActivaHUD == i) {
-                        estacionActivaHUD = -1;
+                        estacionActivaHUD = -1; // Cerrar el HUD actual
                     }
                     else {
-                        estacionActivaHUD = i;
+                        estacionActivaHUD = i; // Abrir este HUD
                     }
                     break;
                 }
@@ -561,118 +870,7 @@ void processInput(GLFWwindow* window) {
         std::cout << ">> Procesion de canoas iniciada en el manantial." << std::endl;
     }
 
-    static bool kPresionada = false;
-    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-        if (!kPresionada) {
-            kPresionada = true;
-            std::cout << "glm::vec3(" << camera.Position.x << "f, -0.65f, " << camera.Position.z << "f)," << std::endl;
-        }
-    }
-    else {
-        kPresionada = false;
-    }
-
-    // --- CONTROLES DE CALIBRACIÓN: SELECCIÓN DE FOCOS ---
-    if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS) { postePuenteSeleccionado = 0; focoUrandenSeleccionado = -1; focoLetrasSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS) { postePuenteSeleccionado = 1; focoUrandenSeleccionado = -1; focoLetrasSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_9) == GLFW_PRESS) { postePuenteSeleccionado = 2; focoUrandenSeleccionado = -1; focoLetrasSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_0) == GLFW_PRESS) { postePuenteSeleccionado = 3; focoUrandenSeleccionado = -1; focoLetrasSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-
-    if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) { reflectorOpuestoSeleccionado = 0; focoUrandenSeleccionado = -1; focoLetrasSeleccionado = -1; postePuenteSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS) { reflectorOpuestoSeleccionado = 1; focoUrandenSeleccionado = -1; focoLetrasSeleccionado = -1; postePuenteSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) { reflectorOpuestoSeleccionado = 3; focoUrandenSeleccionado = -1; focoLetrasSeleccionado = -1; postePuenteSeleccionado = -1; calibrandoA1 = false; }
-
-    // --- F1 a F4 para los FOCOS DE URANDEN ORIGINALES ---
-    if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS) { focoUrandenSeleccionado = 0; focoLetrasSeleccionado = -1; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_F2) == GLFW_PRESS) { focoUrandenSeleccionado = 1; focoLetrasSeleccionado = -1; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS) { focoUrandenSeleccionado = 2; focoLetrasSeleccionado = -1; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_F4) == GLFW_PRESS) { focoUrandenSeleccionado = 3; focoLetrasSeleccionado = -1; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-
-    // --- F5 a F8 para los NUEVOS FOCOS DE LAS LETRAS ---
-    if (glfwGetKey(window, GLFW_KEY_F5) == GLFW_PRESS) { focoLetrasSeleccionado = 0; focoUrandenSeleccionado = -1; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_F6) == GLFW_PRESS) { focoLetrasSeleccionado = 1; focoUrandenSeleccionado = -1; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_F7) == GLFW_PRESS) { focoLetrasSeleccionado = 2; focoUrandenSeleccionado = -1; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-    if (glfwGetKey(window, GLFW_KEY_F8) == GLFW_PRESS) { focoLetrasSeleccionado = 3; focoUrandenSeleccionado = -1; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; calibrandoA1 = false; }
-
-    // --- Movimiento y Rotación: FOCOS DE URANDÉN ORIGINALES ---
-    if (focoUrandenSeleccionado >= 0 && focoUrandenSeleccionado < (int)focosUranden.size()) {
-        float velAjuste = 0.6f * deltaTime;
-        float velRot = 60.0f * deltaTime;
-
-        if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)    focosUranden[focoUrandenSeleccionado].pos.z -= velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)  focosUranden[focoUrandenSeleccionado].pos.z += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)  focosUranden[focoUrandenSeleccionado].pos.x -= velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) focosUranden[focoUrandenSeleccionado].pos.x += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS)     focosUranden[focoUrandenSeleccionado].pos.y += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)     focosUranden[focoUrandenSeleccionado].pos.y -= velAjuste;
-
-        if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS)     focosUranden[focoUrandenSeleccionado].yaw += velRot;
-        if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS)     focosUranden[focoUrandenSeleccionado].yaw -= velRot;
-        if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)     focosUranden[focoUrandenSeleccionado].pitch += velRot;
-        if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS)     focosUranden[focoUrandenSeleccionado].pitch -= velRot;
-    }
-
-    // --- Movimiento y Rotación: NUEVOS FOCOS DE LAS LETRAS ---
-    if (focoLetrasSeleccionado >= 0 && focoLetrasSeleccionado < (int)focosLetras.size()) {
-        float velAjuste = 0.6f * deltaTime;
-        float velRot = 60.0f * deltaTime;
-
-        if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)    focosLetras[focoLetrasSeleccionado].pos.z -= velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)  focosLetras[focoLetrasSeleccionado].pos.z += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)  focosLetras[focoLetrasSeleccionado].pos.x -= velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) focosLetras[focoLetrasSeleccionado].pos.x += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS)     focosLetras[focoLetrasSeleccionado].pos.y += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)     focosLetras[focoLetrasSeleccionado].pos.y -= velAjuste;
-
-        if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS)     focosLetras[focoLetrasSeleccionado].yaw += velRot;
-        if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS)     focosLetras[focoLetrasSeleccionado].yaw -= velRot;
-        if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)     focosLetras[focoLetrasSeleccionado].pitch += velRot;
-        if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS)     focosLetras[focoLetrasSeleccionado].pitch -= velRot;
-    }
-
-    if (postePuenteSeleccionado >= 0 && postePuenteSeleccionado < (int)postesPuente.size()) {
-        float velAjuste = 0.6f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)    postesPuente[postePuenteSeleccionado].z -= velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)  postesPuente[postePuenteSeleccionado].z += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)  postesPuente[postePuenteSeleccionado].x -= velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) postesPuente[postePuenteSeleccionado].x += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS)     postesPuente[postePuenteSeleccionado].y += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)     postesPuente[postePuenteSeleccionado].y -= velAjuste;
-    }
-
-    if (reflectorOpuestoSeleccionado >= 0 && reflectorOpuestoSeleccionado < (int)lucesManantialOpuesto.size()) {
-        float velAjuste = 0.6f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)    lucesManantialOpuesto[reflectorOpuestoSeleccionado].z -= velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)  lucesManantialOpuesto[reflectorOpuestoSeleccionado].z += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)  lucesManantialOpuesto[reflectorOpuestoSeleccionado].x -= velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) lucesManantialOpuesto[reflectorOpuestoSeleccionado].x += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS)     lucesManantialOpuesto[reflectorOpuestoSeleccionado].y += velAjuste;
-        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)     lucesManantialOpuesto[reflectorOpuestoSeleccionado].y -= velAjuste;
-    }
-
-    if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-        calibrandoA1 = true; postePuenteSeleccionado = -1; reflectorOpuestoSeleccionado = -1; focoUrandenSeleccionado = -1; focoLetrasSeleccionado = -1;
-    }
-    if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) calibrandoA1 = false;
-
-    if (calibrandoA1) {
-        float v = 0.6f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)    posCanoaA1.z -= v;
-        if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)  posCanoaA1.z += v;
-        if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)  posCanoaA1.x -= v;
-        if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) posCanoaA1.x += v;
-        if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS)     posCanoaA1.y += v;
-        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS)     posCanoaA1.y -= v;
-        if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS)     yawCanoaA1 += 60.0f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS)     yawCanoaA1 -= 60.0f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)     escalaA1 += 0.3f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS) { escalaA1 -= 0.3f * deltaTime; if (escalaA1 < 0.05f) escalaA1 = 0.05f; }
-        if (glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS)     escalaCanoaA1 += 0.6f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) { escalaCanoaA1 -= 0.6f * deltaTime; if (escalaCanoaA1 < 0.1f) escalaCanoaA1 = 0.1f; }
-        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)     pisoCanoaA1 += 0.2f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)     pisoCanoaA1 -= 0.2f * deltaTime;
-    }
-
+    // --- CONTROLES DE ANIMACIÓN DE MARIPOSEROS (A1) ---
     static bool tabPresionado = false;
     if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
         if (!tabPresionado) {
@@ -712,23 +910,6 @@ void processInput(GLFWwindow* window) {
         if (cargarKeyframesA1(ARCHIVO_KF_A1)) std::cout << "A1: cargados " << keyframesA1.size() << " cuadros" << std::endl;
         else std::cout << "A1: no se pudo cargar " << ARCHIVO_KF_A1 << std::endl;
     }
-
-    static bool pKeyPressed = false;
-    if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
-        if (!pKeyPressed) {
-            pKeyPressed = true;
-
-            std::cout << "\n=== COORDENADAS Y ROTACION NUEVOS FOCOS LETRAS ===" << std::endl;
-            for (size_t i = 0; i < focosLetras.size(); i++) {
-                std::cout << "    { glm::vec3(" << focosLetras[i].pos.x << "f, " << focosLetras[i].pos.y << "f, " << focosLetras[i].pos.z << "f), "
-                    << focosLetras[i].pitch << "f, " << focosLetras[i].yaw << "f }," << std::endl;
-            }
-            std::cout << "==================================================\n" << std::endl;
-        }
-    }
-    else {
-        pKeyPressed = false;
-    }
 }
 
 void showFPS(GLFWwindow* window) {
@@ -759,6 +940,19 @@ int main() {
         glfwTerminate();
         return -1;
     }
+
+    // --- ACOMODAR VENTANAS AUTOMATICAMENTE ---
+#ifdef _WIN32
+    HWND consoleWindow = GetConsoleWindow();
+    if (consoleWindow) {
+        // Mueve la consola a la izquierda (x=0, y=0) y le da tamaño fijo (ancho=600, alto=600)
+        SetWindowPos(consoleWindow, NULL, 0, 0, 600, 600, SWP_NOZORDER);
+    }
+#endif
+    // Mueve la ventana del juego a la derecha (dejando espacio para la consola)
+    glfwSetWindowPos(window, 620, 50);
+    // -----------------------------------------
+
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
@@ -771,6 +965,7 @@ int main() {
         std::cerr << "ERROR::GLEW::Fallo al inicializar GLEW" << std::endl;
         return -1;
     }
+    std::cout << "GPU: " << glGetString(GL_RENDERER) << std::endl;
 
     glEnable(GL_DEPTH_TEST);
 
@@ -796,7 +991,7 @@ int main() {
     );
 
     skyboxShader.use();
-    glUniform1i(glGetUniformLocation(skyboxShader.ID, "skybox"), 0);
+    glUniform1i(ubicacionUniform(skyboxShader.ID, "skybox"), 0);
 
     std::vector<float> waterVertices;
     std::vector<unsigned int> waterIndices;
@@ -826,6 +1021,7 @@ int main() {
     Model modeloCanoa("Models/canoa.obj");
     Model modeloCanoaPro("Models/canoaPro.obj");
     Model modeloCopalera("Models/copalera.gltf");
+    Model bastonViejito("Models/Baston.obj");
     construirRutasProcesion();
 
     std::cout << "Cargando mapa completo de Uranden..." << std::endl;
@@ -845,13 +1041,30 @@ int main() {
     Model mAlaIzq("Models/mariposero/alaIzq.obj");
     Model mAlaDer("Models/mariposero/alaDer.obj");
 
+    // --- CARGAR LOS 2 VIEJITOS DE LUIS ---
+    std::cout << "Cargando Viejitos Danzantes..." << std::endl;
+    ViejitoRig viejito1("Models/ViejitoRig.bin", "Models/Textura_Viejito.png");
+    ViejitoRig viejito2("Models/ViejitoRig.bin", "Models/Textura_Viejito.png");
+    viejito1.animarPose(posturaBase());
+    viejito2.animarPose(posturaBase());
+
+    // Variables de animacion para los viejitos (se autoinicia)
+    int estadoBaile1 = SALTO_IZQUIERDA;
+    int estadoBaile2 = PASO_IZQUIERDO;
+    float tiempoEstado1 = 0.0f;
+    float tiempoEstado2 = 0.0f;
+    float ritmoViejitos = 1.0f;
+    int vueltasBaile = 0;
+    float relojCuerpo1 = 0.0f;
+    float relojCuerpo2 = 1.5f;
+
     if (cargarKeyframesA1(ARCHIVO_KF_A1))
         std::cout << "A1: keyframes cargados desde " << ARCHIVO_KF_A1 << std::endl;
     else
         std::cout << "A1: usando los 14 keyframes predeterminados" << std::endl;
 
     auto dibujar = [&](Model& m, const glm::mat4& M) {
-        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(M));
+        glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(M));
         m.Draw(miShader);
         };
 
@@ -939,12 +1152,30 @@ int main() {
 
         processInput(window);
 
+        // --- VERIFICAR SI HAY ESTACIONES CERCA ---
+        bool cercaDeAlguna = false;
         for (int i = 0; i < (int)estaciones.size(); i++) {
             float distancia = glm::distance(glm::vec2(camera.Position.x, camera.Position.z),
                 glm::vec2(estaciones[i].posicion.x, estaciones[i].posicion.z));
             estaciones[i].interactuable = (distancia <= estaciones[i].radioDeteccion);
+            if (estaciones[i].interactuable) {
+                cercaDeAlguna = true;
+            }
         }
 
+        // --- LOGICA DE AVISO EN CONSOLA ---
+        static bool mensajeMostrado = false;
+        if (cercaDeAlguna && estacionActivaHUD == -1) {
+            if (!mensajeMostrado) {
+                std::cout << "\n>> [ESTACION CERCANA] Presiona la tecla 'E' para leer la informacion de la cedula." << std::endl;
+                mensajeMostrado = true;
+            }
+        }
+        else {
+            mensajeMostrado = false;
+        }
+
+        // --- ACTUALIZACION DE TIEMPOS DE ANIMACION ---
         float tiempoAnim = currentFrame;
 
         if (animacionProcesionActiva) {
@@ -964,6 +1195,46 @@ int main() {
             evaluarRuta(r, d, posProc[k], yawProc[k]);
         }
 
+        // --- ACTUALIZAR ESTADO DEL BAILE DE LOS VIEJITOS ---
+        float deltaModificado = deltaTime * velAnimViejitos;
+
+        relojCuerpo1 += deltaModificado * ritmoViejitos;
+        relojCuerpo2 += deltaModificado * ritmoViejitos;
+        tiempoEstado1 += deltaModificado * ritmoViejitos;
+        tiempoEstado2 += deltaModificado * ritmoViejitos;
+
+        if (tiempoEstado1 >= DURACION_ESTADO[estadoBaile1]) {
+            tiempoEstado1 -= DURACION_ESTADO[estadoBaile1];
+            if (estadoBaile1 == REMATE) {
+                estadoBaile1 = SALTO_IZQUIERDA;
+                ++vueltasBaile;
+                ritmoViejitos = std::min(1.40f, 1.0f + 0.05f * vueltasBaile); // Aceleran poco a poco
+            }
+            else {
+                ++estadoBaile1;
+            }
+        }
+        if (tiempoEstado2 >= DURACION_ESTADO[estadoBaile2]) {
+            tiempoEstado2 -= DURACION_ESTADO[estadoBaile2];
+            if (estadoBaile2 == REMATE) {
+                estadoBaile2 = SALTO_IZQUIERDA;
+            }
+            else {
+                ++estadoBaile2;
+            }
+        }
+
+        float tBaile1 = tiempoEstado1 / DURACION_ESTADO[estadoBaile1];
+        float posX1 = 0.0f, posY1 = 0.0f, posZ1 = 0.0f, bastonZ1 = 0.0f, bastonX1 = 0.0f;
+        PoseViejito poseV1 = calcularBaile(estadoBaile1, tBaile1, relojCuerpo1, posX1, posY1, posZ1, bastonZ1, bastonX1);
+        viejito1.animarPose(poseV1);
+
+        float tBaile2 = tiempoEstado2 / DURACION_ESTADO[estadoBaile2];
+        float posX2 = 0.0f, posY2 = 0.0f, posZ2 = 0.0f, bastonZ2 = 0.0f, bastonX2 = 0.0f;
+        PoseViejito poseV2 = calcularBaile(estadoBaile2, tBaile2, relojCuerpo2, posX2, posY2, posZ2, bastonZ2, bastonX2);
+        viejito2.animarPose(poseV2);
+
+
         glm::vec3 fogColor = glm::vec3(0.012f, 0.018f, 0.035f);
         float fogDensity = 0.012f;
 
@@ -975,176 +1246,180 @@ int main() {
 
         // --- D. Shader Principal: Luces y Cámara ---
         miShader.use();
-        glUniform3fv(glGetUniformLocation(miShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
-        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniform3fv(ubicacionUniform(miShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
+        glUniformMatrix4fv(ubicacionUniform(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(ubicacionUniform(miShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.direction"), -0.2f, -1.0f, -0.3f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.ambient"), 0.04f, 0.05f, 0.08f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.diffuse"), 0.18f, 0.20f, 0.25f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "dirLight.specular"), 0.15f, 0.15f, 0.20f);
+        // 1. Luz Direccional (Luna original multiplicada por intensidad)
+        glm::vec3 baseAmbient = glm::vec3(0.04f, 0.05f, 0.08f) * intensidadGlobal;
+        glm::vec3 baseDiffuse = glm::vec3(0.18f, 0.20f, 0.25f) * intensidadGlobal;
+
+        glUniform3f(ubicacionUniform(miShader.ID, "dirLight.direction"), -0.2f, -1.0f, -0.3f);
+        glUniform3fv(ubicacionUniform(miShader.ID, "dirLight.ambient"), 1, glm::value_ptr(baseAmbient));
+        glUniform3fv(ubicacionUniform(miShader.ID, "dirLight.diffuse"), 1, glm::value_ptr(baseDiffuse));
+        // El especular no lo multiplicamos tanto para que el agua no brille exageradamente
+        glUniform3f(ubicacionUniform(miShader.ID, "dirLight.specular"), 0.15f, 0.15f, 0.20f);
 
         for (unsigned int i = 0; i < 4; i++) {
             std::string base = "pointLights[" + std::to_string(i) + "].";
             glm::vec3 posLuzReal = pointLightOffsets[i] + offsetMuelle;
-            glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(posLuzReal));
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.0f, 0.0f, 0.0f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 0.0f, 0.0f, 0.0f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.0f, 0.0f, 0.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.09f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.032f);
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(posLuzReal));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.0f, 0.0f, 0.0f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 0.0f, 0.0f, 0.0f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.0f, 0.0f, 0.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.09f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 0.032f);
         }
 
         {
             glm::vec4 offLocal = glm::vec4(0.0f, 0.9f, 0.8f, 1.0f);
             glm::vec3 posLuzA1 = posCanoaA1 + glm::vec3(
                 glm::rotate(glm::mat4(1.0f), glm::radians(yawCanoaA1), glm::vec3(0.0f, 1.0f, 0.0f)) * offLocal);
-            glUniform3fv(glGetUniformLocation(miShader.ID, "pointLights[0].position"), 1, glm::value_ptr(posLuzA1));
-            glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[0].ambient"), 0.03f, 0.03f, 0.03f);
-            glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[0].diffuse"), 0.95f, 0.90f, 0.80f);
-            glUniform3f(glGetUniformLocation(miShader.ID, "pointLights[0].specular"), 0.20f, 0.20f, 0.20f);
-            glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[0].constant"), 1.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[0].linear"), 0.35f);
-            glUniform1f(glGetUniformLocation(miShader.ID, "pointLights[0].quadratic"), 0.45f);
+            glUniform3fv(ubicacionUniform(miShader.ID, "pointLights[0].position"), 1, glm::value_ptr(posLuzA1));
+            glUniform3f(ubicacionUniform(miShader.ID, "pointLights[0].ambient"), 0.03f, 0.03f, 0.03f);
+            glUniform3f(ubicacionUniform(miShader.ID, "pointLights[0].diffuse"), 0.95f, 0.90f, 0.80f);
+            glUniform3f(ubicacionUniform(miShader.ID, "pointLights[0].specular"), 0.20f, 0.20f, 0.20f);
+            glUniform1f(ubicacionUniform(miShader.ID, "pointLights[0].constant"), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, "pointLights[0].linear"), 0.35f);
+            glUniform1f(ubicacionUniform(miShader.ID, "pointLights[0].quadratic"), 0.45f);
         }
 
         for (unsigned int i = 0; i < 5; i++) {
             int lightIndex = 5 + i;
             std::string base = "pointLights[" + std::to_string(lightIndex) + "].";
-            glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(postesPlaza[i]));
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.005f, 0.005f, 0.005f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 0.70f, 0.68f, 0.62f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.25f, 0.25f, 0.22f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.60f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 1.40f);
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(postesPlaza[i]));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.005f, 0.005f, 0.005f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 0.70f, 0.68f, 0.62f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.25f, 0.25f, 0.22f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.60f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 1.40f);
         }
 
         for (unsigned int i = 0; i < 6; i++) {
             int lightIndex = 10 + i;
             std::string base = "pointLights[" + std::to_string(lightIndex) + "].";
-
-            if (i < lucesOrilla.size()) {
-                glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(lucesOrilla[i]));
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.015f, 0.010f, 0.003f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 1.20f, 0.75f, 0.28f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.50f, 0.35f, 0.15f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.32f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.38f);
-            }
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(lucesOrilla[i]));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.015f, 0.010f, 0.003f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 1.20f, 0.75f, 0.28f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.50f, 0.35f, 0.15f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.32f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 0.38f);
         }
 
         for (unsigned int i = 0; i < 2; i++) {
             int lightIndex = 16 + i;
             std::string base = "pointLights[" + std::to_string(lightIndex) + "].";
-
-            if (i < lucesLetrero.size()) {
-                glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(lucesLetrero[i]));
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.02f, 0.015f, 0.005f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 1.10f, 0.70f, 0.25f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.70f, 0.45f, 0.18f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.22f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.20f);
-            }
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(lucesLetrero[i]));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.02f, 0.015f, 0.005f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 1.10f, 0.70f, 0.25f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.70f, 0.45f, 0.18f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.22f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 0.20f);
         }
 
         for (unsigned int i = 0; i < 2; i++) {
             int lightIndex = 18 + i;
             std::string base = "pointLights[" + std::to_string(lightIndex) + "].";
-
             float tP = (i == 0) ? 0.35f : 0.65f;
             glm::vec3 pIzq = glm::mix(postesPuente[0], postesPuente[1], tP);
             glm::vec3 pDer = glm::mix(postesPuente[2], postesPuente[3], tP);
-
             glm::vec3 posLuzPuente = (pIzq + pDer) * 0.5f + glm::vec3(0.0f, 0.08f, 0.0f);
-
-            glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(posLuzPuente));
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.015f, 0.008f, 0.001f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 0.70f, 0.32f, 0.05f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.30f, 0.15f, 0.03f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.70f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 1.80f);
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(posLuzPuente));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.015f, 0.008f, 0.001f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 0.70f, 0.32f, 0.05f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.30f, 0.15f, 0.03f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.70f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 1.80f);
         }
 
         for (unsigned int i = 0; i < 4; i++) {
             int lightIndex = 20 + i;
             std::string base = "pointLights[" + std::to_string(lightIndex) + "].";
-
-            if (i < lucesManantialOpuesto.size()) {
-                glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(lucesManantialOpuesto[i]));
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.015f, 0.010f, 0.003f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 1.25f, 0.78f, 0.28f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.50f, 0.35f, 0.15f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.32f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.38f);
-            }
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(lucesManantialOpuesto[i]));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.015f, 0.010f, 0.003f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 1.25f, 0.78f, 0.28f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.50f, 0.35f, 0.15f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.32f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 0.38f);
         }
 
-        // 10. FOCOS ORIGINALES DEL LETRERO URANDÉN (Índices 40 al 43)
+        // --- 12. LUCES MAESTRAS DEL SEGUNDO PUENTE (Índices 48 y 49) ---
+        for (unsigned int i = 0; i < 2; i++) {
+            int lightIndex = 48 + i;
+            std::string base = "pointLights[" + std::to_string(lightIndex) + "].";
+            float tP = (i == 0) ? 0.35f : 0.65f;
+            glm::vec3 pIzq = glm::mix(postesPuente2[0], postesPuente2[1], tP);
+            glm::vec3 pDer = glm::mix(postesPuente2[2], postesPuente2[3], tP);
+            glm::vec3 posLuzPuente = (pIzq + pDer) * 0.5f + glm::vec3(0.0f, 0.08f, 0.0f);
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(posLuzPuente));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.015f, 0.008f, 0.001f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 0.70f, 0.32f, 0.05f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.30f, 0.15f, 0.03f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.70f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 1.80f);
+        }
+
+        // FOCOS ORIGINALES DEL LETRERO URANDÉN (Índices 40 al 43)
         for (unsigned int i = 0; i < 4; i++) {
             int lightIndex = 40 + i;
             std::string base = "pointLights[" + std::to_string(lightIndex) + "].";
-
-            if (i < focosUranden.size()) {
-                glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(focosUranden[i].pos));
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.02f, 0.01f, 0.00f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 1.20f, 0.65f, 0.20f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.50f, 0.35f, 0.15f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.22f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.20f);
-            }
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(focosUranden[i].pos));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.02f, 0.01f, 0.00f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 1.20f, 0.65f, 0.20f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.50f, 0.35f, 0.15f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.22f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 0.20f);
         }
 
-        // 11. NUEVOS FOCOS EN FRENTE DE LAS LETRAS (Índices 44 al 47)
+        // NUEVOS FOCOS EN FRENTE DE LAS LETRAS (Índices 44 al 47)
         for (unsigned int i = 0; i < focosLetras.size(); i++) {
             int lightIndex = 44 + i;
             std::string base = "pointLights[" + std::to_string(lightIndex) + "].";
-
-            if (i < focosLetras.size()) {
-                glUniform3fv(glGetUniformLocation(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(focosLetras[i].pos));
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "ambient").c_str()), 0.02f, 0.01f, 0.00f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "diffuse").c_str()), 1.20f, 0.65f, 0.20f);
-                glUniform3f(glGetUniformLocation(miShader.ID, (base + "specular").c_str()), 0.50f, 0.35f, 0.15f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "constant").c_str()), 1.0f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "linear").c_str()), 0.22f);
-                glUniform1f(glGetUniformLocation(miShader.ID, (base + "quadratic").c_str()), 0.20f);
-            }
+            glUniform3fv(ubicacionUniform(miShader.ID, (base + "position").c_str()), 1, glm::value_ptr(focosLetras[i].pos));
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "ambient").c_str()), 0.02f, 0.01f, 0.00f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "diffuse").c_str()), 1.20f, 0.65f, 0.20f);
+            glUniform3f(ubicacionUniform(miShader.ID, (base + "specular").c_str()), 0.50f, 0.35f, 0.15f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "linear").c_str()), 0.22f);
+            glUniform1f(ubicacionUniform(miShader.ID, (base + "quadratic").c_str()), 0.20f);
         }
 
         glm::vec3 spotLightPos = glm::vec3(0.0f, 3.5f, 1.0f);
         glm::vec3 spotLightDir = glm::normalize(glm::vec3(0.0f, -1.0f, -0.3f));
-        glUniform3fv(glGetUniformLocation(miShader.ID, "spotLight.position"), 1, glm::value_ptr(spotLightPos));
-        glUniform3fv(glGetUniformLocation(miShader.ID, "spotLight.direction"), 1, glm::value_ptr(spotLightDir));
-        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.cutOff"), glm::cos(glm::radians(18.0f)));
-        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.outerCutOff"), glm::cos(glm::radians(24.0f)));
-        glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.ambient"), 0.0f, 0.0f, 0.0f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.diffuse"), 0.75f, 0.75f, 0.80f);
-        glUniform3f(glGetUniformLocation(miShader.ID, "spotLight.specular"), 0.40f, 0.40f, 0.45f);
-        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.constant"), 1.0f);
-        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.linear"), 0.14f);
-        glUniform1f(glGetUniformLocation(miShader.ID, "spotLight.quadratic"), 0.07f);
+        glUniform3fv(ubicacionUniform(miShader.ID, "spotLight.position"), 1, glm::value_ptr(spotLightPos));
+        glUniform3fv(ubicacionUniform(miShader.ID, "spotLight.direction"), 1, glm::value_ptr(spotLightDir));
+        glUniform1f(ubicacionUniform(miShader.ID, "spotLight.cutOff"), glm::cos(glm::radians(18.0f)));
+        glUniform1f(ubicacionUniform(miShader.ID, "spotLight.outerCutOff"), glm::cos(glm::radians(24.0f)));
+        glUniform3f(ubicacionUniform(miShader.ID, "spotLight.ambient"), 0.0f, 0.0f, 0.0f);
+        glUniform3f(ubicacionUniform(miShader.ID, "spotLight.diffuse"), 0.75f, 0.75f, 0.80f);
+        glUniform3f(ubicacionUniform(miShader.ID, "spotLight.specular"), 0.40f, 0.40f, 0.45f);
+        glUniform1f(ubicacionUniform(miShader.ID, "spotLight.constant"), 1.0f);
+        glUniform1f(ubicacionUniform(miShader.ID, "spotLight.linear"), 0.14f);
+        glUniform1f(ubicacionUniform(miShader.ID, "spotLight.quadratic"), 0.07f);
 
-        glUniform3fv(glGetUniformLocation(miShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
-        glUniform1f(glGetUniformLocation(miShader.ID, "fogDensity"), fogDensity);
+        glUniform3fv(ubicacionUniform(miShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
+        glUniform1f(ubicacionUniform(miShader.ID, "fogDensity"), fogDensity);
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), true);
-        glUniform1i(glGetUniformLocation(miShader.ID, "isLightSource"), false);
-        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
-        glUniform1f(glGetUniformLocation(miShader.ID, "materialAlpha"), 1.0f);
+        glUniform1i(ubicacionUniform(miShader.ID, "useTexture"), true);
+        glUniform1i(ubicacionUniform(miShader.ID, "isLightSource"), false);
+        glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
+        glUniform1f(ubicacionUniform(miShader.ID, "materialAlpha"), 1.0f);
 
         glm::mat4 mapaModel = glm::mat4(1.0f);
         mapaModel = glm::translate(mapaModel, glm::vec3(0.0f, -0.2f, 0.0f));
         mapaModel = glm::scale(mapaModel, glm::vec3(0.2f));
-        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(mapaModel));
+        glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(mapaModel));
         modeloMapaCompleto.Draw(miShader);
 
         for (int k = 0; k < NUM_CANOAS_PROC; k++) {
@@ -1154,7 +1429,10 @@ int main() {
             float faseK = tiempoAnim + (k * 0.5f);
             float bamboleoK = std::sin(faseK * 2.85f) * 1.2f;
             float cabeceoK = std::cos(faseK * 2.85f) * 0.6f;
+
+            // --- Ajuste de altura ---
             posK.y += std::sin(tiempoAnim * 1.2f + (k * 0.7f)) * 0.008f;
+            posK.y += alturaCanoasProcesion;
 
             glm::mat4 canoaMat = glm::mat4(1.0f);
             canoaMat = glm::translate(canoaMat, posK);
@@ -1164,7 +1442,7 @@ int main() {
             canoaMat = glm::rotate(canoaMat, glm::radians(cabeceoK), glm::vec3(1.0f, 0.0f, 0.0f));
             canoaMat = glm::scale(canoaMat, glm::vec3(escalaCanoaProcesion));
 
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(canoaMat));
+            glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(canoaMat));
             modeloCanoaPro.Draw(miShader);
 
             glm::mat4 copaleraMat = canoaMat;
@@ -1172,8 +1450,8 @@ int main() {
             copaleraMat = glm::rotate(copaleraMat, glm::radians(-90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             copaleraMat = glm::scale(copaleraMat, glm::vec3(escalaCopalera));
 
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(copaleraMat));
-            glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
+            glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(copaleraMat));
+            glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
             modeloCopalera.Draw(miShader);
 
             glm::vec3 posSahumador = glm::vec3(copaleraMat * glm::vec4(offsetFuegoSahumador, 1.0f));
@@ -1183,13 +1461,13 @@ int main() {
             float parpadeoBrasa = 0.6f + 0.4f * std::sin(tiempoAnim * 28.0f + k * 7.0f) * std::cos(tiempoAnim * 15.0f + k);
             glm::vec3 colorBrasa = glm::vec3(1.0f, 0.30f, 0.05f) * parpadeoBrasa;
 
-            glUniform3fv(glGetUniformLocation(miShader.ID, (baseSah + "position").c_str()), 1, glm::value_ptr(posSahumador));
-            glUniform3f(glGetUniformLocation(miShader.ID, (baseSah + "ambient").c_str()), colorBrasa.r * 0.05f, colorBrasa.g * 0.05f, colorBrasa.b * 0.05f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (baseSah + "diffuse").c_str()), colorBrasa.r, colorBrasa.g, colorBrasa.b);
-            glUniform3f(glGetUniformLocation(miShader.ID, (baseSah + "specular").c_str()), colorBrasa.r * 0.5f, colorBrasa.g * 0.5f, colorBrasa.b * 0.5f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (baseSah + "constant").c_str()), 1.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (baseSah + "linear").c_str()), 2.5f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (baseSah + "quadratic").c_str()), 4.5f);
+            glUniform3fv(ubicacionUniform(miShader.ID, (baseSah + "position").c_str()), 1, glm::value_ptr(posSahumador));
+            glUniform3f(ubicacionUniform(miShader.ID, (baseSah + "ambient").c_str()), colorBrasa.r * 0.05f, colorBrasa.g * 0.05f, colorBrasa.b * 0.05f);
+            glUniform3f(ubicacionUniform(miShader.ID, (baseSah + "diffuse").c_str()), colorBrasa.r, colorBrasa.g, colorBrasa.b);
+            glUniform3f(ubicacionUniform(miShader.ID, (baseSah + "specular").c_str()), colorBrasa.r * 0.5f, colorBrasa.g * 0.5f, colorBrasa.b * 0.5f);
+            glUniform1f(ubicacionUniform(miShader.ID, (baseSah + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (baseSah + "linear").c_str()), 2.5f);
+            glUniform1f(ubicacionUniform(miShader.ID, (baseSah + "quadratic").c_str()), 4.5f);
 
             glm::vec3 posLuzProa = glm::vec3(canoaMat * glm::vec4(offsetLuzProa, 1.0f));
             glm::vec3 posLuzPopa = glm::vec3(canoaMat * glm::vec4(offsetLuzPopa, 1.0f));
@@ -1201,22 +1479,22 @@ int main() {
             glm::vec3 colorVela = glm::vec3(0.9f, 0.6f, 0.2f) * parpadeoVela;
 
             std::string baseProa = "pointLights[" + std::to_string(idxProa) + "].";
-            glUniform3fv(glGetUniformLocation(miShader.ID, (baseProa + "position").c_str()), 1, glm::value_ptr(posLuzProa));
-            glUniform3f(glGetUniformLocation(miShader.ID, (baseProa + "ambient").c_str()), colorVela.r * 0.05f, colorVela.g * 0.05f, colorVela.b * 0.05f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (baseProa + "diffuse").c_str()), colorVela.r, colorVela.g, colorVela.b);
-            glUniform3f(glGetUniformLocation(miShader.ID, (baseProa + "specular").c_str()), colorVela.r * 0.3f, colorVela.g * 0.3f, colorVela.b * 0.3f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (baseProa + "constant").c_str()), 1.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (baseProa + "linear").c_str()), 1.2f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (baseProa + "quadratic").c_str()), 1.8f);
+            glUniform3fv(ubicacionUniform(miShader.ID, (baseProa + "position").c_str()), 1, glm::value_ptr(posLuzProa));
+            glUniform3f(ubicacionUniform(miShader.ID, (baseProa + "ambient").c_str()), colorVela.r * 0.05f, colorVela.g * 0.05f, colorVela.b * 0.05f);
+            glUniform3f(ubicacionUniform(miShader.ID, (baseProa + "diffuse").c_str()), colorVela.r, colorVela.g, colorVela.b);
+            glUniform3f(ubicacionUniform(miShader.ID, (baseProa + "specular").c_str()), colorVela.r * 0.3f, colorVela.g * 0.3f, colorVela.b * 0.3f);
+            glUniform1f(ubicacionUniform(miShader.ID, (baseProa + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (baseProa + "linear").c_str()), 1.2f);
+            glUniform1f(ubicacionUniform(miShader.ID, (baseProa + "quadratic").c_str()), 1.8f);
 
             std::string basePopa = "pointLights[" + std::to_string(idxPopa) + "].";
-            glUniform3fv(glGetUniformLocation(miShader.ID, (basePopa + "position").c_str()), 1, glm::value_ptr(posLuzPopa));
-            glUniform3f(glGetUniformLocation(miShader.ID, (basePopa + "ambient").c_str()), colorVela.r * 0.05f, colorVela.g * 0.05f, colorVela.b * 0.05f);
-            glUniform3f(glGetUniformLocation(miShader.ID, (basePopa + "diffuse").c_str()), colorVela.r, colorVela.g, colorVela.b);
-            glUniform3f(glGetUniformLocation(miShader.ID, (basePopa + "specular").c_str()), colorVela.r * 0.3f, colorVela.g * 0.3f, colorVela.b * 0.3f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (basePopa + "constant").c_str()), 1.0f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (basePopa + "linear").c_str()), 1.2f);
-            glUniform1f(glGetUniformLocation(miShader.ID, (basePopa + "quadratic").c_str()), 1.8f);
+            glUniform3fv(ubicacionUniform(miShader.ID, (basePopa + "position").c_str()), 1, glm::value_ptr(posLuzPopa));
+            glUniform3f(ubicacionUniform(miShader.ID, (basePopa + "ambient").c_str()), colorVela.r * 0.05f, colorVela.g * 0.05f, colorVela.b * 0.05f);
+            glUniform3f(ubicacionUniform(miShader.ID, (basePopa + "diffuse").c_str()), colorVela.r, colorVela.g, colorVela.b);
+            glUniform3f(ubicacionUniform(miShader.ID, (basePopa + "specular").c_str()), colorVela.r * 0.3f, colorVela.g * 0.3f, colorVela.b * 0.3f);
+            glUniform1f(ubicacionUniform(miShader.ID, (basePopa + "constant").c_str()), 1.0f);
+            glUniform1f(ubicacionUniform(miShader.ID, (basePopa + "linear").c_str()), 1.2f);
+            glUniform1f(ubicacionUniform(miShader.ID, (basePopa + "quadratic").c_str()), 1.8f);
         }
 
         glm::mat4 canoaA1 = glm::translate(glm::mat4(1.0f), posCanoaA1);
@@ -1238,45 +1516,92 @@ int main() {
         dibujarPurepecha(canoaA1, sepA1, 0.0f, false);
         dibujarPurepecha(canoaA1, -sepA1, 0.0f, true);
 
-        // --- Render Focos Físicos (Geometría) ---
-        glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), false);
-        glUniform1i(glGetUniformLocation(miShader.ID, "isLightSource"), true);
-        glUniform1f(glGetUniformLocation(miShader.ID, "fogDensity"), 0.0f);
+        // --- DIBUJAR A LOS 2 VIEJITOS EN LA PLAZA (ESTACION 2) ---
+        // 1. Desactivamos el shader principal para evitar conflictos con el ViejitoRig
+        glUseProgram(0);
 
-        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 0.98f, 0.90f);
+        // 2. Activamos explicitamente la textura para que ViejitoRig la intercepte correctamente
+        glActiveTexture(GL_TEXTURE0);
+
+        // Viejito 1 (Lado izquierdo de la plaza)
+        glm::mat4 modeloViejito1 = glm::mat4(1.0f);
+        modeloViejito1 = glm::translate(modeloViejito1, glm::vec3(2.5f, -0.05f, 15.6f) + offsetViejitos);
+        modeloViejito1 = glm::translate(modeloViejito1, glm::vec3(posX1, posY1, posZ1));
+        modeloViejito1 = glm::rotate(modeloViejito1, glm::radians(-45.0f + rotacionViejitos), glm::vec3(0.0f, 1.0f, 0.0f));
+        modeloViejito1 = glm::scale(modeloViejito1, glm::vec3(escalaViejitos));
+        viejito1.dibujar(modeloViejito1, view, projection);
+
+        // Viejito 2 (Lado derecho de la plaza)
+        glm::mat4 modeloViejito2 = glm::mat4(1.0f);
+        modeloViejito2 = glm::translate(modeloViejito2, glm::vec3(3.2f, -0.05f, 16.0f) + offsetViejitos);
+        modeloViejito2 = glm::translate(modeloViejito2, glm::vec3(posX2, posY2, posZ2));
+        modeloViejito2 = glm::rotate(modeloViejito2, glm::radians(-90.0f + rotacionViejitos), glm::vec3(0.0f, 1.0f, 0.0f));
+        modeloViejito2 = glm::scale(modeloViejito2, glm::vec3(escalaViejitos));
+        viejito2.dibujar(modeloViejito2, view, projection);
+
+        // Volver al shader normal para dibujar los bastones de los viejitos
+        miShader.use();
+
+        const glm::vec3 agarreDedosReposo(-0.351f, 0.765f, 0.126f);
+        const glm::vec3 puntoEnBaston(-0.045f, 0.48f, -0.015f);
+
+        // Baston Viejito 1
+        glm::vec3 agarreAnimado1 = glm::vec3(viejito1.movimientoManoDerecha() * glm::vec4(agarreDedosReposo, 1.0f));
+        glm::mat4 modeloBaston1 = glm::translate(modeloViejito1, agarreAnimado1);
+        float inclinacionZ1 = 8.0f + 1.5f * std::sin(relojCuerpo1 * 2.1f) + glm::clamp(bastonZ1 * 0.16f, -4.0f, 4.0f);
+        float inclinacionX1 = glm::clamp(bastonX1 * 0.14f, -3.5f, 3.5f);
+        modeloBaston1 = glm::rotate(modeloBaston1, glm::radians(inclinacionZ1), glm::vec3(0, 0, 1));
+        modeloBaston1 = glm::rotate(modeloBaston1, glm::radians(inclinacionX1), glm::vec3(1, 0, 0));
+        modeloBaston1 = glm::scale(modeloBaston1, glm::vec3(escalaViejitos));
+        modeloBaston1 = glm::translate(modeloBaston1, -puntoEnBaston);
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(modeloBaston1));
+        bastonViejito.Draw(miShader);
+
+        // Baston Viejito 2
+        glm::vec3 agarreAnimado2 = glm::vec3(viejito2.movimientoManoDerecha() * glm::vec4(agarreDedosReposo, 1.0f));
+        glm::mat4 modeloBaston2 = glm::translate(modeloViejito2, agarreAnimado2);
+        float inclinacionZ2 = 8.0f + 1.5f * std::sin(relojCuerpo2 * 2.1f) + glm::clamp(bastonZ2 * 0.16f, -4.0f, 4.0f);
+        float inclinacionX2 = glm::clamp(bastonX2 * 0.14f, -3.5f, 3.5f);
+        modeloBaston2 = glm::rotate(modeloBaston2, glm::radians(inclinacionZ2), glm::vec3(0, 0, 1));
+        modeloBaston2 = glm::rotate(modeloBaston2, glm::radians(inclinacionX2), glm::vec3(1, 0, 0));
+        modeloBaston2 = glm::scale(modeloBaston2, glm::vec3(escalaViejitos));
+        modeloBaston2 = glm::translate(modeloBaston2, -puntoEnBaston);
+        glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(modeloBaston2));
+        bastonViejito.Draw(miShader);
+
+        // --- Render Focos Físicos (Geometría) ---
+        glUniform1i(ubicacionUniform(miShader.ID, "useTexture"), false);
+        glUniform1i(ubicacionUniform(miShader.ID, "isLightSource"), true);
+        glUniform1f(ubicacionUniform(miShader.ID, "fogDensity"), 0.0f);
+
+        glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.0f, 0.98f, 0.90f);
         for (unsigned int i = 0; i < postesPlaza.size(); i++) {
             glm::mat4 focoModel = glm::mat4(1.0f);
             focoModel = glm::translate(focoModel, postesPlaza[i]);
             focoModel = glm::scale(focoModel, glm::vec3(0.009f));
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoModel));
+            glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoModel));
             glBindVertexArray(skyboxVAO);
             glDrawArrays(GL_TRIANGLES, 0, 36);
             glBindVertexArray(0);
         }
 
-        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.15f, 0.75f, 0.25f);
+        glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.15f, 0.75f, 0.25f);
         for (unsigned int i = 0; i < lucesOrilla.size(); i++) {
             glm::mat4 focoOrillaModel = glm::mat4(1.0f);
             focoOrillaModel = glm::translate(focoOrillaModel, lucesOrilla[i]);
             focoOrillaModel = glm::scale(focoOrillaModel, glm::vec3(0.019f));
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoOrillaModel));
+            glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoOrillaModel));
             glBindVertexArray(skyboxVAO);
             glDrawArrays(GL_TRIANGLES, 0, 36);
             glBindVertexArray(0);
         }
 
         for (unsigned int i = 0; i < lucesManantialOpuesto.size(); i++) {
-            if ((int)i == reflectorOpuestoSeleccionado) {
-                glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 1.0f, 0.0f);
-            }
-            else {
-                glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.15f, 0.75f, 0.25f);
-            }
-
+            glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.15f, 0.75f, 0.25f);
             glm::mat4 focoOpuestoModel = glm::mat4(1.0f);
             focoOpuestoModel = glm::translate(focoOpuestoModel, lucesManantialOpuesto[i]);
             focoOpuestoModel = glm::scale(focoOpuestoModel, glm::vec3(0.019f));
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoOpuestoModel));
+            glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoOpuestoModel));
             glBindVertexArray(skyboxVAO);
             glDrawArrays(GL_TRIANGLES, 0, 36);
             glBindVertexArray(0);
@@ -1284,20 +1609,13 @@ int main() {
 
         // DIBUJAR LOS CUBOS DE URANDÉN ORIGINALES ROTADOS
         for (unsigned int i = 0; i < focosUranden.size(); i++) {
-            if ((int)i == focoUrandenSeleccionado) {
-                glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 5.0f, 5.0f, 0.0f);
-            }
-            else {
-                glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.15f, 0.75f, 0.25f);
-            }
-
+            glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.15f, 0.75f, 0.25f);
             glm::mat4 focoUrandenModel = glm::mat4(1.0f);
             focoUrandenModel = glm::translate(focoUrandenModel, focosUranden[i].pos);
             focoUrandenModel = glm::rotate(focoUrandenModel, glm::radians(focosUranden[i].yaw), glm::vec3(0.0f, 1.0f, 0.0f));
             focoUrandenModel = glm::rotate(focoUrandenModel, glm::radians(focosUranden[i].pitch), glm::vec3(1.0f, 0.0f, 0.0f));
             focoUrandenModel = glm::scale(focoUrandenModel, glm::vec3(0.035f));
-
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoUrandenModel));
+            glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoUrandenModel));
             glBindVertexArray(skyboxVAO);
             glDrawArrays(GL_TRIANGLES, 0, 36);
             glBindVertexArray(0);
@@ -1305,25 +1623,19 @@ int main() {
 
         // DIBUJAR LOS NUEVOS CUBOS DE LAS LETRAS ROTADOS
         for (unsigned int i = 0; i < focosLetras.size(); i++) {
-            if ((int)i == focoLetrasSeleccionado) {
-                glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 5.0f, 5.0f, 0.0f);
-            }
-            else {
-                glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.15f, 0.75f, 0.25f);
-            }
-
+            glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.15f, 0.75f, 0.25f);
             glm::mat4 focoLetrasModel = glm::mat4(1.0f);
             focoLetrasModel = glm::translate(focoLetrasModel, focosLetras[i].pos);
             focoLetrasModel = glm::rotate(focoLetrasModel, glm::radians(focosLetras[i].yaw), glm::vec3(0.0f, 1.0f, 0.0f));
             focoLetrasModel = glm::rotate(focoLetrasModel, glm::radians(focosLetras[i].pitch), glm::vec3(1.0f, 0.0f, 0.0f));
             focoLetrasModel = glm::scale(focoLetrasModel, glm::vec3(0.035f));
-
-            glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoLetrasModel));
+            glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(focoLetrasModel));
             glBindVertexArray(skyboxVAO);
             glDrawArrays(GL_TRIANGLES, 0, 36);
             glBindVertexArray(0);
         }
 
+        // --- HILERA DE FOQUITOS: PRIMER PUENTE ---
         int numFocosHilera = 9;
         for (int cuerda = 0; cuerda < 2; cuerda++) {
             glm::vec3 pA = (cuerda == 0) ? postesPuente[0] : postesPuente[2];
@@ -1337,7 +1649,7 @@ int main() {
                 puntosCuerda[i] = p;
             }
 
-            glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 0.03f, 0.03f, 0.03f);
+            glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 0.03f, 0.03f, 0.03f);
             for (int i = 0; i < numFocosHilera - 1; i++) {
                 glm::vec3 pInicio = puntosCuerda[i];
                 glm::vec3 pFin = puntosCuerda[i + 1];
@@ -1356,55 +1668,100 @@ int main() {
                 cableModel = glm::rotate(cableModel, glm::radians(pitchSegmento), glm::vec3(1.0f, 0.0f, 0.0f));
                 cableModel = glm::scale(cableModel, glm::vec3(0.0018f, 0.0018f, distSegmento * 0.5f));
 
-                glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(cableModel));
+                glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(cableModel));
                 glBindVertexArray(skyboxVAO);
                 glDrawArrays(GL_TRIANGLES, 0, 36);
                 glBindVertexArray(0);
             }
 
+            glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 4.5f, 2.2f, 0.4f);
             for (int i = 0; i < numFocosHilera; i++) {
-                int idPosteActual = -1;
-                if (cuerda == 0 && i == 0) idPosteActual = 0;
-                else if (cuerda == 0 && i == numFocosHilera - 1) idPosteActual = 1;
-                else if (cuerda == 1 && i == 0) idPosteActual = 2;
-                else if (cuerda == 1 && i == numFocosHilera - 1) idPosteActual = 3;
-
-                if (idPosteActual != -1 && idPosteActual == postePuenteSeleccionado) {
-                    glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 5.0f, 5.0f, 0.0f);
-                }
-                else {
-                    glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 4.5f, 2.2f, 0.4f);
-                }
-
                 glm::mat4 foquitoModel = glm::mat4(1.0f);
                 foquitoModel = glm::translate(foquitoModel, puntosCuerda[i]);
                 foquitoModel = glm::scale(foquitoModel, glm::vec3(0.007f));
-                glUniformMatrix4fv(glGetUniformLocation(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(foquitoModel));
-
+                glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(foquitoModel));
                 glBindVertexArray(skyboxVAO);
                 glDrawArrays(GL_TRIANGLES, 0, 36);
                 glBindVertexArray(0);
             }
         }
 
-        glUniform1i(glGetUniformLocation(miShader.ID, "isLightSource"), false);
-        glUniform1i(glGetUniformLocation(miShader.ID, "useTexture"), true);
-        glUniform3f(glGetUniformLocation(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
-        glUniform1f(glGetUniformLocation(miShader.ID, "fogDensity"), fogDensity);
+        // --- HILERA DE FOQUITOS: SEGUNDO PUENTE ---
+        int numFocosHilera2 = 12;
+        for (int cuerda = 0; cuerda < 2; cuerda++) {
+            glm::vec3 pA = (cuerda == 0) ? postesPuente2[0] : postesPuente2[2];
+            glm::vec3 pB = (cuerda == 0) ? postesPuente2[1] : postesPuente2[3];
+
+            std::vector<glm::vec3> puntosCuerda(numFocosHilera2);
+            for (int i = 0; i < numFocosHilera2; i++) {
+                float tC = (float)i / (float)(numFocosHilera2 - 1);
+                glm::vec3 p = glm::mix(pA, pB, tC);
+                p.y += std::sin(tC * 3.14159f) * 0.1f;
+                puntosCuerda[i] = p;
+            }
+
+            glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 0.03f, 0.03f, 0.03f);
+            for (int i = 0; i < numFocosHilera2 - 1; i++) {
+                glm::vec3 pInicio = puntosCuerda[i];
+                glm::vec3 pFin = puntosCuerda[i + 1];
+
+                glm::vec3 dirSegmento = pFin - pInicio;
+                float distSegmento = glm::length(dirSegmento);
+                glm::vec3 centroSegmento = (pInicio + pFin) * 0.5f;
+
+                glm::vec3 dirNorm = glm::normalize(dirSegmento);
+                float yawSegmento = glm::degrees(std::atan2(dirNorm.x, dirNorm.z));
+                float pitchSegmento = glm::degrees(-std::asin(dirNorm.y));
+
+                glm::mat4 cableModel = glm::mat4(1.0f);
+                cableModel = glm::translate(cableModel, centroSegmento);
+                cableModel = glm::rotate(cableModel, glm::radians(yawSegmento), glm::vec3(0.0f, 1.0f, 0.0f));
+                cableModel = glm::rotate(cableModel, glm::radians(pitchSegmento), glm::vec3(1.0f, 0.0f, 0.0f));
+                cableModel = glm::scale(cableModel, glm::vec3(0.0018f, 0.0018f, distSegmento * 0.5f));
+
+                glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(cableModel));
+                glBindVertexArray(skyboxVAO);
+                glDrawArrays(GL_TRIANGLES, 0, 36);
+                glBindVertexArray(0);
+            }
+
+            glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 4.5f, 2.2f, 0.4f);
+            for (int i = 0; i < numFocosHilera2; i++) {
+                glm::mat4 foquitoModel = glm::mat4(1.0f);
+                foquitoModel = glm::translate(foquitoModel, puntosCuerda[i]);
+                foquitoModel = glm::scale(foquitoModel, glm::vec3(0.007f));
+                glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(foquitoModel));
+                glBindVertexArray(skyboxVAO);
+                glDrawArrays(GL_TRIANGLES, 0, 36);
+                glBindVertexArray(0);
+            }
+        }
+
+        glUniform1i(ubicacionUniform(miShader.ID, "isLightSource"), false);
+        glUniform1i(ubicacionUniform(miShader.ID, "useTexture"), true);
+        glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
+        glUniform1f(ubicacionUniform(miShader.ID, "fogDensity"), fogDensity);
 
         waterShader.use();
-        glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-        glUniform3fv(glGetUniformLocation(waterShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
-        glUniform3f(glGetUniformLocation(waterShader.ID, "dirLightDir"), -0.2f, -1.0f, -0.3f);
+        glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniform3fv(ubicacionUniform(waterShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
+        // Le pasamos la direccion de la luz (falsa luna/sol) para el brillo del agua
+        glUniform3f(ubicacionUniform(waterShader.ID, "dirLightDir"), -0.2f, -1.0f, -0.3f);
 
-        glUniform1f(glGetUniformLocation(waterShader.ID, "time"), currentFrame * 0.08f);
-        glUniform3fv(glGetUniformLocation(waterShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
-        glUniform1f(glGetUniformLocation(waterShader.ID, "fogDensity"), fogDensity);
+        glUniform1f(ubicacionUniform(waterShader.ID, "time"), currentFrame * 0.08f);
+        glUniform3fv(ubicacionUniform(waterShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
+        glUniform1f(ubicacionUniform(waterShader.ID, "fogDensity"), fogDensity);
+
+        // --- NUEVO: Pasar el Skybox al agua para hacer reflejos HD ---
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+        glUniform1i(ubicacionUniform(waterShader.ID, "skybox"), 1);
+        // -------------------------------------------------------------
 
         glm::mat4 waterModel = glm::mat4(1.0f);
         waterModel = glm::translate(waterModel, glm::vec3(0.0f, -0.88f, 0.0f));
-        glUniformMatrix4fv(glGetUniformLocation(waterShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(waterModel));
+        glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(waterModel));
 
         glDisable(GL_CULL_FACE);
         glBindVertexArray(waterVAO);
@@ -1414,8 +1771,8 @@ int main() {
         glDepthFunc(GL_LEQUAL);
         skyboxShader.use();
         glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
-        glUniformMatrix4fv(glGetUniformLocation(skyboxShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(skyboxView));
-        glUniformMatrix4fv(glGetUniformLocation(skyboxShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(ubicacionUniform(skyboxShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(skyboxView));
+        glUniformMatrix4fv(ubicacionUniform(skyboxShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glBindVertexArray(skyboxVAO);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
@@ -1423,26 +1780,30 @@ int main() {
         glBindVertexArray(0);
         glDepthFunc(GL_LESS);
 
+        // --- RENDERIZADO DEL HUD (MOCKUPS) ---
         if (estacionActivaHUD != -1) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDisable(GL_DEPTH_TEST);
 
             hudShader.use();
-            glUniform1i(glGetUniformLocation(hudShader.ID, "hudTexture"), 0);
+            glUniform1i(ubicacionUniform(hudShader.ID, "hudTexture"), 0);
             glm::mat4 orthoProj = glm::ortho(0.0f, 800.0f, 0.0f, 600.0f);
             hudShader.setMat4("projection", orthoProj);
 
+            // Dibujar el Mockup (Cédula de Información)
             glm::mat4 orthoModel = glm::mat4(1.0f);
             orthoModel = glm::translate(orthoModel, glm::vec3(80.0f, 120.0f, 0.0f));
             orthoModel = glm::scale(orthoModel, glm::vec3(640.0f, 360.0f, 1.0f));
             hudShader.setMat4("model", orthoModel);
 
             glActiveTexture(GL_TEXTURE0);
+
+            // ASIGNACION DE MOCKUPS CORREGIDA
             if (estacionActivaHUD == 0) glBindTexture(GL_TEXTURE_2D, texCedula1);
-            else if (estacionActivaHUD == 1) glBindTexture(GL_TEXTURE_2D, texCedula2);
-            else if (estacionActivaHUD == 2) glBindTexture(GL_TEXTURE_2D, texCedula3);
-            else if (estacionActivaHUD == 3) glBindTexture(GL_TEXTURE_2D, texCedula4);
+            else if (estacionActivaHUD == 1) glBindTexture(GL_TEXTURE_2D, texCedula4);
+            else if (estacionActivaHUD == 2) glBindTexture(GL_TEXTURE_2D, texCedula2);
+            else if (estacionActivaHUD == 3) glBindTexture(GL_TEXTURE_2D, texCedula3);
 
             glBindVertexArray(hudVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
