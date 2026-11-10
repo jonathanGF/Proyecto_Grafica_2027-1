@@ -53,8 +53,9 @@ const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
 Camera camera(glm::vec3(0.0f, 0.10f, 4.0f));
-// --- VARIABLE PARA EL MODO DRON AUTOMATICO ---
+// --- VARIABLES PARA MODOS DE CAMARA ---
 bool modoDron = false;
+bool modoCaminataPOV = true; // Activa el seguimiento de terreno y zancada humana
 bool firstMouse = true;
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
@@ -63,6 +64,8 @@ float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 double lastFpsTime = 0.0;
 int nbFrames = 0;
+float tiempoInicioPato = 0.0f;
+bool patoIniciado = false;
 
 // Multiplicador de luz ambiental global fijo
 float intensidadGlobal = 2.3284f;
@@ -791,7 +794,7 @@ static PoseViejito calcularBaile(int estado, float t, float reloj,
 }
 
 // =========================================================================
-// 4. ENTRADA Y CONTROL 
+// 4. ENTRADA, CONTROL Y TOPOGRAFIA DEL TERRENO
 // =========================================================================
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -825,18 +828,97 @@ void fijarCamara(const glm::vec3& pos, float pitch, float yaw) {
     camera.ProcessMouseMovement(0.0f, 0.0f);
 }
 
+// Estructura para guardar los triangulos del piso del mapa real
+struct TrianguloTerreno {
+    glm::vec3 a, b, c;
+    float minX, maxX, minZ, maxZ;
+};
+std::vector<TrianguloTerreno> mallaTerreno;
+
+void construirColisionadorTerreno(Model& mapa) {
+    mallaTerreno.clear();
+    glm::mat4 M = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.2f, 0.0f));
+    M = glm::scale(M, glm::vec3(0.2f));
+
+    for (const auto& mesh : mapa.meshes) {
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            glm::vec3 v0 = glm::vec3(M * glm::vec4(mesh.vertices[mesh.indices[i]].Position, 1.0f));
+            glm::vec3 v1 = glm::vec3(M * glm::vec4(mesh.vertices[mesh.indices[i + 1]].Position, 1.0f));
+            glm::vec3 v2 = glm::vec3(M * glm::vec4(mesh.vertices[mesh.indices[i + 2]].Position, 1.0f));
+
+            // Quitamos el filtro de normales restrictivo para aceptar cualquier inclinacion de la colina
+            float maxY = std::max({ v0.y, v1.y, v2.y });
+            float minY = std::min({ v0.y, v1.y, v2.y });
+
+            // Solo ignoramos techos o copas de arboles exageradamente altos
+            if (minY > 0.90f || maxY < -0.85f) continue;
+
+            TrianguloTerreno tri;
+            tri.a = v0; tri.b = v1; tri.c = v2;
+            tri.minX = std::min({ v0.x, v1.x, v2.x });
+            tri.maxX = std::max({ v0.x, v1.x, v2.x });
+            tri.minZ = std::min({ v0.z, v1.z, v2.z });
+            tri.maxZ = std::max({ v0.z, v1.z, v2.z });
+            mallaTerreno.push_back(tri);
+        }
+    }
+    std::cout << ">> [TERRENO]: Colisionador activo con " << mallaTerreno.size() << " triangulos." << std::endl;
+}
+
+float obtenerAlturaTerreno(float x, float z, float alturaActual = -0.20f) {
+    float mejorY = -100.0f;
+    bool encontrado = false;
+
+    for (const auto& t : mallaTerreno) {
+        if (x < t.minX || x > t.maxX || z < t.minZ || z > t.maxZ) continue;
+
+        float det = (t.b.z - t.c.z) * (t.a.x - t.c.x) + (t.c.x - t.b.x) * (t.a.z - t.c.z);
+        if (std::abs(det) < 1e-6f) continue;
+
+        float l1 = ((t.b.z - t.c.z) * (x - t.c.x) + (t.c.x - t.b.x) * (z - t.c.z)) / det;
+        float l2 = ((t.c.z - t.a.z) * (x - t.c.x) + (t.a.x - t.c.x) * (z - t.c.z)) / det;
+        float l3 = 1.0f - l1 - l2;
+
+        if (l1 >= -0.05f && l2 >= -0.05f && l3 >= -0.05f) { // Tolerancia baricentrica mas amplia
+            float y = l1 * t.a.y + l2 * t.b.y + l3 * t.c.y;
+            if (y > mejorY) {
+                mejorY = y;
+                encontrado = true;
+            }
+        }
+    }
+
+    if (encontrado) {
+        return mejorY;
+    }
+
+    // Respaldo inteligente ampliado para toda el area de la colina y el kiosco
+    if (z >= 10.0f) return -0.10f; // Zona alta de la plaza y colinas
+    if (z <= -5.0f) return -0.15f; // Zona de las letras de Urandén
+
+    return std::max(alturaActual, -0.45f);
+}
+
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
         camera.ProcessKeyboard(FORWARD, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        modoCaminataPOV = true;
+    }
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
         camera.ProcessKeyboard(BACKWARD, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        modoCaminataPOV = true;
+    }
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
         camera.ProcessKeyboard(LEFT, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        modoCaminataPOV = true;
+    }
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
         camera.ProcessKeyboard(RIGHT, deltaTime);
+        modoCaminataPOV = true;
+    }
 
     if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
         if (!eKeyPressed) {
@@ -868,41 +950,43 @@ void processInput(GLFWwindow* window) {
     // ATAJOS DE CAMARA PARA GRABACION DE VIDEOS (RUBRICA)
     // =========================================================================
 
-    // Tecla 7: Video A - Panoramica elevada del entorno (Agua HD, luces y cielo)
+    // Tecla 7: Video A - Panoramica elevada del entorno (Desactiva gravedad para no caer)
     if (teclaPulsada(window, GLFW_KEY_7)) {
+        modoDron = false;
+        modoCaminataPOV = false;
         fijarCamara(glm::vec3(0.0f, 6.5f, 5.0f), -35.0f, -90.0f);
         std::cout << ">> [CAMARA 7]: Vista panoramica del entorno activada." << std::endl;
     }
 
-    // Tecla 8: Video B - Inicio de recorrido (Frente al Islote URANDEN)
+    // Tecla 8: Video B - Inicio de recorrido (Activa modo caminata POV sobre el terreno)
     if (teclaPulsada(window, GLFW_KEY_8)) {
-        fijarCamara(glm::vec3(4.5f, 0.10f, -12.5f), -5.0f, -135.0f);
+        modoDron = false;
+        modoCaminataPOV = true;
+        float ySuelo = obtenerAlturaTerreno(4.5f, -12.5f) + 0.25f;
+        fijarCamara(glm::vec3(4.5f, ySuelo, -12.5f), -5.0f, -135.0f);
         std::cout << ">> [CAMARA 8]: Vista inicial de recorrido (Letras Uranden) activada." << std::endl;
     }
 
     // Tecla 9: Video C - Plaza de los Viejitos Danzantes (Estacion 2)
     if (teclaPulsada(window, GLFW_KEY_9)) {
+        modoDron = false;
+        modoCaminataPOV = false;
         fijarCamara(glm::vec3(2.8f, 0.2f, 14.5f), -5.0f, 40.0f);
         std::cout << ">> [CAMARA 9]: Vista enfocada a los Viejitos activada." << std::endl;
     }
 
     // Tecla 0: Video C - Canoa de los Mariposeros (Estacion 3)
     if (teclaPulsada(window, GLFW_KEY_0)) {
+        modoDron = false;
+        modoCaminataPOV = false;
         fijarCamara(glm::vec3(-0.6f, -0.2f, 10.7f), -8.0f, -170.0f);
         std::cout << ">> [CAMARA 0]: Vista enfocada a los Mariposeros activada." << std::endl;
     }
 
     // Tecla 5: Activar / Desactivar el Modo Dron (Toma orbital automatica)
-    static bool teclaDronPresionada = false;
-    if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) {
-        if (!teclaDronPresionada) {
-            modoDron = !modoDron;
-            teclaDronPresionada = true;
-            std::cout << (modoDron ? ">> [MODO DRON]: Activado. Volando en orbita..." : ">> [MODO DRON]: Desactivado. Control manual restaurado.") << std::endl;
-        }
-    }
-    else {
-        teclaDronPresionada = false;
+    if (teclaPulsada(window, GLFW_KEY_5)) {
+        modoDron = !modoDron;
+        std::cout << (modoDron ? ">> [MODO DRON]: Activado. Volando en orbita..." : ">> [MODO DRON]: Desactivado. Control manual restaurado.") << std::endl;
     }
 
     // --- CONTROLES DE ANIMACIÓN DE MARIPOSEROS (A1) ---
@@ -941,7 +1025,8 @@ void processInput(GLFWwindow* window) {
         if (guardarKeyframesA1(ARCHIVO_KF_A1)) std::cout << "A1: guardado en " << ARCHIVO_KF_A1 << std::endl;
         else std::cout << "A1: no se pudo guardar (existe la carpeta 'animaciones'?)" << std::endl;
     }
-    if (teclaPulsada(window, GLFW_KEY_5)) {
+    // Se cambio a tecla L para no chocar con la tecla 5 del Modo Dron
+    if (teclaPulsada(window, GLFW_KEY_L)) {
         if (cargarKeyframesA1(ARCHIVO_KF_A1)) std::cout << "A1: cargados " << keyframesA1.size() << " cuadros" << std::endl;
         else std::cout << "A1: no se pudo cargar " << ARCHIVO_KF_A1 << std::endl;
     }
@@ -995,13 +1080,10 @@ int main() {
 #ifdef _WIN32
     HWND consoleWindow = GetConsoleWindow();
     if (consoleWindow) {
-        // Mueve la consola a la izquierda (x=0, y=0) y le da tamaño fijo (ancho=600, alto=600)
         SetWindowPos(consoleWindow, NULL, 0, 0, 600, 600, SWP_NOZORDER);
     }
 #endif
-    // Mueve la ventana del juego a la derecha (dejando espacio para la consola)
     glfwSetWindowPos(window, 620, 50);
-    // -----------------------------------------
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
@@ -1072,10 +1154,14 @@ int main() {
     Model modeloCanoaPro("Models/canoaPro.obj");
     Model modeloCopalera("Models/copalera.gltf");
     Model bastonViejito("Models/Baston.obj");
+    std::cout << "Cargando modelo de pato..." << std::endl;
+    Model patoNadando("Models/PatoNadando.glb");
+    Model patoPreparandoVuelo("Models/PatoPreparadoVuelo.glb");
     construirRutasProcesion();
 
     std::cout << "Cargando mapa completo de Uranden..." << std::endl;
     Model modeloMapaCompleto("Models/MapaCompleto/Uranden_MAPA.gltf");
+    construirColisionadorTerreno(modeloMapaCompleto);
 
     std::cout << "Cargando mariposero..." << std::endl;
     Model mCuerpo("Models/mariposero/cuerpo.obj");
@@ -1174,12 +1260,12 @@ int main() {
     Shader hudShader("shader/hud.vs", "shader/hud.fs");
     unsigned int hudVAO, hudVBO;
     float hudVertices[] = {
-         0.0f,  1.0f,       0.0f, 1.0f,
-         1.0f,  0.0f,       1.0f, 0.0f,
-         0.0f,  0.0f,       0.0f, 0.0f,
-         0.0f,  1.0f,       0.0f, 1.0f,
-         1.0f,  1.0f,       1.0f, 1.0f,
-         1.0f,  0.0f,       1.0f, 0.0f
+         0.0f,  1.0f,        0.0f, 1.0f,
+         1.0f,  0.0f,        1.0f, 0.0f,
+         0.0f,  0.0f,        0.0f, 0.0f,
+         0.0f,  1.0f,        0.0f, 1.0f,
+         1.0f,  1.0f,        1.0f, 1.0f,
+         1.0f,  0.0f,        1.0f, 0.0f
     };
     glGenVertexArrays(1, &hudVAO);
     glGenBuffers(1, &hudVBO);
@@ -1200,31 +1286,86 @@ int main() {
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
+        if (!patoIniciado) {
+            tiempoInicioPato = currentFrame;
+            patoIniciado = true;
+        }
+        float tiempoActualPato = currentFrame - tiempoInicioPato;
+
+        glm::vec3 posPato = glm::vec3(-2.0f, -0.82f, 4.0f);
+        float rotacionPatoX = 0.0f;
+        Model* modeloPatoActual = &patoNadando;
+
+        if (tiempoActualPato < 7.0f) {
+            modeloPatoActual = &patoNadando;
+            posPato.y += std::sin(currentFrame * 3.0f) * 0.015f;
+        }
+        else if (tiempoActualPato >= 7.0f && tiempoActualPato < 10.0f) {
+            modeloPatoActual = &patoPreparandoVuelo;
+            posPato.y += std::sin(currentFrame * 15.0f) * 0.025f;
+        }
+        else {
+            modeloPatoActual = &patoPreparandoVuelo;
+            float tiempoVuelo = tiempoActualPato - 10.0f;
+            posPato.y += 0.7f * tiempoVuelo;
+            posPato.z -= 1.2f * tiempoVuelo;
+            rotacionPatoX = 20.0f;
+        }
+
+        miShader.use();
+        glm::mat4 matrizPato = glm::mat4(1.0f);
+        matrizPato = glm::translate(matrizPato, posPato);
+        matrizPato = glm::rotate(matrizPato, glm::radians(rotacionPatoX), glm::vec3(1.0f, 0.0f, 0.0f));
+        matrizPato = glm::scale(matrizPato, glm::vec3(0.25f));
+
+        glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(matrizPato));
+        glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
+        modeloPatoActual->Draw(miShader);
+        // =========================================================================
+        // 1. GUARDAR LA POSICION FISICA ANTES DE MOVERSE
+        // =========================================================================
+        glm::vec3 posCamaraAnterior = camera.Position;
         processInput(window);
 
         // =========================================================================
-        // EFECTO POV CINEMATICO (HEAD BOBBING - PASOS AL CAMINAR)
+        // 2. SISTEMA DE TOPOGRAFIA Y ZANCADA 3D (SIN BLOQUEO DE MOVIMIENTO)
         // =========================================================================
-        static float tiempoCaminata = 0.0f;
-        // Detectar si el usuario esta presionando alguna tecla de movimiento
-        bool estaCaminando = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
-            glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
-            glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
-            glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
+        static float fasePaso = 0.0f;
+        static float alturaPiesSuavizada = -0.20f;
+        glm::vec3 offsetVisualOjos(0.0f);
 
-        // Si camina y NO esta el dron activado, hacemos el cabeceo
-        if (estaCaminando && !modoDron) {
-            // REDUCIMOS DE 11.0f A 8.0f PARA PASOS MAS LENTOS
-            tiempoCaminata += deltaTime * 8.0f;
-            // REDUCIMOS DE 0.015f A 0.006f PARA UN REBOTE MAS SUAVE
-            camera.Position.y += std::sin(tiempoCaminata) * 0.006f;
+        if (!modoDron && modoCaminataPOV) {
+            // A. Medir si estamos caminando con W, A, S, D
+            float distHorizontal = glm::length(glm::vec2(camera.Position.x - posCamaraAnterior.x,
+                camera.Position.z - posCamaraAnterior.z));
+            bool seEstaMoviendo = (distHorizontal > 0.0001f);
+
+            // B. Obtener la altura del suelo debajo de nosotros
+            float sueloReal = obtenerAlturaTerreno(camera.Position.x, camera.Position.z, alturaPiesSuavizada);
+
+            // Piso de seguridad: Nunca permitir que el suelo baje mas alla de -0.55f (nivel de la orilla)
+            // Asi aunque pises el agua o una zona hueca, jamas te hundiras debajo del pasto.
+            sueloReal = std::max(sueloReal, -0.55f);
+
+            // C. Seguir la pendiente suavemente
+            alturaPiesSuavizada = glm::mix(alturaPiesSuavizada, sueloReal, glm::clamp(deltaTime * 14.0f, 0.0f, 1.0f));
+
+            // D. Altura de los ojos sobre el terreno (+0.28f de estatura)
+            // std::max garantiza que nunca estemos a menos de 0.18f del suelo real para no ver debajo del mapa
+            camera.Position.y = std::max(alturaPiesSuavizada + 0.28f, sueloReal + 0.18f);
+
+            // E. Zancada 3D al caminar
+            if (seEstaMoviendo) {
+                fasePaso += deltaTime * 7.5f;
+                float reboteVertical = std::sin(fasePaso * 2.0f) * 0.022f;
+                float balanceoLateral = std::cos(fasePaso) * 0.015f;
+
+                offsetVisualOjos = glm::vec3(0.0f, reboteVertical, 0.0f) + (camera.Right * balanceoLateral);
+            }
+            else {
+                fasePaso = 0.0f;
+            }
         }
-        else if (!modoDron) {
-            // Si se detiene, regresamos suavemente la cabeza a la altura humana (0.10f)
-            camera.Position.y = glm::mix(camera.Position.y, 0.10f, deltaTime * 5.0f);
-            tiempoCaminata = 0.0f;
-        }
-        // =========================================================================
 
         // --- VERIFICAR SI HAY ESTACIONES CERCA ---
         bool cercaDeAlguna = false;
@@ -1339,6 +1480,10 @@ int main() {
 
         glClearColor(fogColor.r, fogColor.g, fogColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Aplicamos temporalmente el offset visual de la zancada para generar la vista sin alterar la fisica
+        glm::vec3 posFisicaGuardada = camera.Position;
+        camera.Position += offsetVisualOjos;
 
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
         glm::mat4 view = camera.GetViewMatrix();
@@ -1616,10 +1761,7 @@ int main() {
         dibujarPurepecha(canoaA1, -sepA1, 0.0f, true);
 
         // --- DIBUJAR A LOS 2 VIEJITOS EN LA PLAZA (ESTACION 2) ---
-        // 1. Desactivamos el shader principal para evitar conflictos con el ViejitoRig
         glUseProgram(0);
-
-        // 2. Activamos explicitamente la textura para que ViejitoRig la intercepte correctamente
         glActiveTexture(GL_TEXTURE0);
 
         // Viejito 1 (Lado izquierdo de la plaza)
@@ -1845,18 +1987,15 @@ int main() {
         glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniform3fv(ubicacionUniform(waterShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
-        // Le pasamos la direccion de la luz (falsa luna/sol) para el brillo del agua
         glUniform3f(ubicacionUniform(waterShader.ID, "dirLightDir"), -0.2f, -1.0f, -0.3f);
 
         glUniform1f(ubicacionUniform(waterShader.ID, "time"), currentFrame * 0.08f);
         glUniform3fv(ubicacionUniform(waterShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
         glUniform1f(ubicacionUniform(waterShader.ID, "fogDensity"), fogDensity);
 
-        // --- NUEVO: Pasar el Skybox al agua para hacer reflejos HD ---
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
         glUniform1i(ubicacionUniform(waterShader.ID, "skybox"), 1);
-        // -------------------------------------------------------------
 
         glm::mat4 waterModel = glm::mat4(1.0f);
         waterModel = glm::translate(waterModel, glm::vec3(0.0f, -0.88f, 0.0f));
@@ -1890,7 +2029,6 @@ int main() {
             glm::mat4 orthoProj = glm::ortho(0.0f, 800.0f, 0.0f, 600.0f);
             hudShader.setMat4("projection", orthoProj);
 
-            // Dibujar el Mockup (Cédula de Información)
             glm::mat4 orthoModel = glm::mat4(1.0f);
             orthoModel = glm::translate(orthoModel, glm::vec3(80.0f, 120.0f, 0.0f));
             orthoModel = glm::scale(orthoModel, glm::vec3(640.0f, 360.0f, 1.0f));
@@ -1898,7 +2036,6 @@ int main() {
 
             glActiveTexture(GL_TEXTURE0);
 
-            // ASIGNACION DE MOCKUPS CORREGIDA
             if (estacionActivaHUD == 0) glBindTexture(GL_TEXTURE_2D, texCedula1);
             else if (estacionActivaHUD == 1) glBindTexture(GL_TEXTURE_2D, texCedula4);
             else if (estacionActivaHUD == 2) glBindTexture(GL_TEXTURE_2D, texCedula2);
@@ -1911,6 +2048,9 @@ int main() {
             glEnable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
         }
+
+        // Restauramos la posicion fisica limpia de la camara para el siguiente cuadro
+        camera.Position = posFisicaGuardada;
 
         glfwSwapBuffers(window);
         glfwPollEvents();
