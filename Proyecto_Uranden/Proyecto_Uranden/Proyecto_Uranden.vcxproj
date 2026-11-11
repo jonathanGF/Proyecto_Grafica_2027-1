@@ -154,6 +154,7 @@
     <ClInclude Include="AudioEngine.h" />
     <ClInclude Include="Camera.h" />
     <ClInclude Include="Model.h" />
+    <ClInclude Include="PescadorFisgaRigGPU_NaturalV3.h" />
     <ClInclude Include="Shader.h" />
     <ClInclude Include="ViejitoRig.h" />
   </ItemGroup>

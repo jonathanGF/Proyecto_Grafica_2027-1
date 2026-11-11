@@ -64,5 +64,8 @@
     <ClInclude Include="ViejitoRig.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
+    <ClInclude Include="PescadorFisgaRigGPU_NaturalV3.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

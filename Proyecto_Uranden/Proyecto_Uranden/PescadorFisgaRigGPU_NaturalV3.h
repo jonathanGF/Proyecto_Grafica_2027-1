@@ -30,7 +30,7 @@ class PescadorFisgaRigGPU {
 public:
     PescadorFisgaRigGPU(const char* archivoBin, const char* archivoTextura)
         : vao_(0), vbo_(0), ebo_(0), textura_(0), shader_(0), listo_(false),
-          raiz_(-1), mano_(-1) {
+        raiz_(-1), mano_(-1) {
         std::ifstream archivo(archivoBin, std::ios::binary);
         if (!archivo) { std::cerr << "RIG GPU: falta " << archivoBin << '\n'; return; }
         char firma[8] = {};
@@ -100,55 +100,53 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, vbo_);
         // Se carga UNA sola vez: no hay glBufferSubData durante la animacion.
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(VerticeFisgaGPU),
-                     vertices.data(), GL_STATIC_DRAW);
+            vertices.data(), GL_STATIC_DRAW);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(std::uint32_t),
-                     indices.data(), GL_STATIC_DRAW);
+            indices.data(), GL_STATIC_DRAW);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VerticeFisgaGPU),
-                              (void*)offsetof(VerticeFisgaGPU, posicion));
+            (void*)offsetof(VerticeFisgaGPU, posicion));
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(VerticeFisgaGPU),
-                              (void*)offsetof(VerticeFisgaGPU, normal));
+            (void*)offsetof(VerticeFisgaGPU, normal));
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VerticeFisgaGPU),
-                              (void*)offsetof(VerticeFisgaGPU, uv));
+            (void*)offsetof(VerticeFisgaGPU, uv));
         glEnableVertexAttribArray(3);
         glVertexAttribIPointer(3, 4, GL_UNSIGNED_BYTE, sizeof(VerticeFisgaGPU),
-                               (void*)offsetof(VerticeFisgaGPU, huesos));
+            (void*)offsetof(VerticeFisgaGPU, huesos));
         glEnableVertexAttribArray(4);
         glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(VerticeFisgaGPU),
-                              (void*)offsetof(VerticeFisgaGPU, pesos));
+            (void*)offsetof(VerticeFisgaGPU, pesos));
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         shader_ = crearShaderGPU();
         if (!shader_) { std::cerr << "RIG GPU: error compilando shaders\n"; return; }
         textura_ = SOIL_load_OGL_texture(archivoTextura, SOIL_LOAD_AUTO,
-                                          SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS);
+            SOIL_CREATE_NEW_ID, SOIL_FLAG_MIPMAPS);
         if (!textura_) {
             std::cerr << "RIG GPU: no se encontro textura " << archivoTextura << '\n';
         }
         listo_ = true;
         animar(0, 0, 0, 0, 0, 0);
-        std::cout << "RIG GPU LISTO: " << nv << " vertices, " << nh
-                  << " huesos. Deformacion en tarjeta grafica.\n";
     }
 
     bool estaListo() const { return listo_; }
 
     // SOLO recalcula 30 transformaciones, no los 128370 vertices.
     void animar(float hombroX, float hombroZ, float codoX,
-                float munecaX, float pechoX, float rodillas) {
+        float munecaX, float pechoX, float rodillas) {
         if (!listo_) return;
         recorrer(raiz_, glm::mat4(1.0f), hombroX, hombroZ,
-                 codoX, munecaX, pechoX, rodillas);
+            codoX, munecaX, pechoX, rodillas);
     }
 
     // Compatibilidad: la version anterior de la practica envia 5 parametros.
     // La nueva animacion usa 6, incluyendo la flexion de rodillas.
     void animar(float hombroX, float hombroZ, float codoX,
-                float munecaX, float pechoX) {
+        float munecaX, float pechoX) {
         animar(hombroX, hombroZ, codoX, munecaX, pechoX, 0.0f);
     }
 
@@ -159,20 +157,20 @@ public:
 
     // Se usa un shader propio SOLO para el pescador, sin cambiar Shader.h.
     void dibujar(const glm::mat4& model, const glm::mat4& view,
-                 const glm::mat4& projection) const {
+        const glm::mat4& projection) const {
         if (!listo_) return;
         GLint programaAnterior = 0;
         glGetIntegerv(GL_CURRENT_PROGRAM, &programaAnterior);
         glUseProgram(shader_);
         glUniformMatrix4fv(glGetUniformLocation(shader_, "uModel"), 1,
-                           GL_FALSE, glm::value_ptr(model));
+            GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shader_, "uView"), 1,
-                           GL_FALSE, glm::value_ptr(view));
+            GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(glGetUniformLocation(shader_, "uProjection"), 1,
-                           GL_FALSE, glm::value_ptr(projection));
+            GL_FALSE, glm::value_ptr(projection));
         glUniformMatrix4fv(glGetUniformLocation(shader_, "uBones[0]"),
-                           static_cast<GLsizei>(paleta_.size()), GL_FALSE,
-                           glm::value_ptr(paleta_[0]));
+            static_cast<GLsizei>(paleta_.size()), GL_FALSE,
+            glm::value_ptr(paleta_[0]));
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, textura_);
         glUniform1i(glGetUniformLocation(shader_, "uTexture"), 0);
@@ -215,7 +213,7 @@ private:
     // en su pivote de la malla. Es importante POST-multiplicar la rotacion:
     // de otro modo el hombro/rodilla se desplazaria del sitio.
     static void giroMundo(glm::mat4& local, const glm::mat4& padre,
-                          float grados, const glm::vec3& ejeMundo) {
+        float grados, const glm::vec3& ejeMundo) {
         if (std::abs(grados) < 0.0001f) return;
         const glm::mat3 orientacion = glm::mat3(padre * local);
         const glm::vec3 ejeLocal = glm::normalize(glm::transpose(orientacion) * ejeMundo);
@@ -223,8 +221,8 @@ private:
     }
 
     void recorrer(int id, const glm::mat4& padre,
-                  float hombroX, float hombroZ, float codoX,
-                  float munecaX, float pechoX, float rodillas) {
+        float hombroX, float hombroZ, float codoX,
+        float munecaX, float pechoX, float rodillas) {
         Nodo& n = nodos_[id];
         glm::mat4 local = n.local;
 
@@ -245,7 +243,7 @@ private:
         // Pelvis: baja con las rodillas, acompana la carga y luego el impulso.
         if (n.nombre == "mixamorig:Hips") {
             const float bajar = 0.000060f * rodillas * rodillas +
-                                0.0060f * carga + 0.012f * buscarCaida;
+                0.0060f * carga + 0.012f * buscarCaida;
             // La pelvis se acerca ligeramente al agua cuando observa.
             local = glm::translate(local, glm::vec3(0.0f, -bajar,
                 -0.008f * carga + 0.006f * impulso + 0.012f * buscarCaida));
@@ -331,7 +329,7 @@ private:
         if (n.hueso >= 0) paleta_[n.hueso] = n.global * n.inversa;
         for (int hijo : n.hijos)
             recorrer(hijo, n.global, hombroX, hombroZ, codoX, munecaX,
-                     pechoX, rodillas);
+                pechoX, rodillas);
     }
     static GLuint compilar(GLenum tipo, const char* fuente) {
         GLuint s = glCreateShader(tipo);

@@ -18,17 +18,17 @@
 // Angulos de articulaciones (grados). Una pose se calcula por fotograma.
 // La deformacion permanece en GPU: aqui solo enviamos matrices de 66 huesos.
 struct PoseViejito {
-    float musloIzq=0, musloDer=0, musloIzqZ=0, musloDerZ=0;
-    float rodillaIzq=0, rodillaDer=0;
-    float pieIzq=0, pieDer=0;
-    float caderaX=0, caderaZ=0;
-    float espalda=0, espaldaMedia=0, espaldaAlta=0, espaldaLateral=0;
-    float cuello=0, cabezaY=0;
-    float brazoIzqX=0, brazoIzqY=0, brazoIzqZ=0;
-    float codoIzqX=0, codoIzqY=0, codoIzqZ=0;
-    float brazoDerX=0, brazoDerY=0, brazoDerZ=0;
-    float codoDerX=0, codoDerY=0, codoDerZ=0;
-    float munecaDerX=0, munecaDerZ=0, agarreDerecho=0;
+    float musloIzq = 0, musloDer = 0, musloIzqZ = 0, musloDerZ = 0;
+    float rodillaIzq = 0, rodillaDer = 0;
+    float pieIzq = 0, pieDer = 0;
+    float caderaX = 0, caderaZ = 0;
+    float espalda = 0, espaldaMedia = 0, espaldaAlta = 0, espaldaLateral = 0;
+    float cuello = 0, cabezaY = 0;
+    float brazoIzqX = 0, brazoIzqY = 0, brazoIzqZ = 0;
+    float codoIzqX = 0, codoIzqY = 0, codoIzqZ = 0;
+    float brazoDerX = 0, brazoDerY = 0, brazoDerZ = 0;
+    float codoDerX = 0, codoDerY = 0, codoDerZ = 0;
+    float munecaDerX = 0, munecaDerZ = 0, agarreDerecho = 0;
 };
 
 class ViejitoRig {
@@ -46,7 +46,7 @@ public:
             std::cerr << "ERROR VIEJITO RIG: Formato incompatible." << std::endl;
             return;
         }
-        std::uint32_t nVertices=0, nIndices=0, nNodos=0, nHuesos=0;
+        std::uint32_t nVertices = 0, nIndices = 0, nNodos = 0, nHuesos = 0;
         archivo.read(reinterpret_cast<char*>(&nVertices), 4);
         archivo.read(reinterpret_cast<char*>(&nIndices), 4);
         archivo.read(reinterpret_cast<char*>(&nNodos), 4);
@@ -60,12 +60,12 @@ public:
 
         vertices.resize(nVertices);
         archivo.read(reinterpret_cast<char*>(vertices.data()),
-                     static_cast<std::streamsize>(nVertices) * sizeof(VerticeGPU));
+            static_cast<std::streamsize>(nVertices) * sizeof(VerticeGPU));
         indices.resize(nIndices);
         archivo.read(reinterpret_cast<char*>(indices.data()),
-                     static_cast<std::streamsize>(nIndices) * sizeof(std::uint32_t));
+            static_cast<std::streamsize>(nIndices) * sizeof(std::uint32_t));
         nodos.resize(nNodos);
-        for (std::uint32_t i=0; i<nNodos; ++i) {
+        for (std::uint32_t i = 0; i < nNodos; ++i) {
             std::int32_t padre = -1, hueso = -1;
             float local[16], inversa[16];
             char nombre[64] = {};
@@ -105,9 +105,9 @@ public:
         glGenBuffers(1, &EBO);
         glBindVertexArray(VAO);
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size()*sizeof(VerticeGPU), vertices.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(VerticeGPU), vertices.data(), GL_STATIC_DRAW);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size()*sizeof(std::uint32_t), indices.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(std::uint32_t), indices.data(), GL_STATIC_DRAW);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VerticeGPU), (void*)offsetof(VerticeGPU, p));
         glEnableVertexAttribArray(1);
@@ -149,11 +149,9 @@ public:
         if (!textura)
             std::cerr << "AVISO VIEJITO RIG: No se cargo textura: " << rutaTextura << std::endl;
         listo = true;
-        animarPiernas(0,0,0,0,0,0);
+        animarPiernas(0, 0, 0, 0, 0, 0);
         // Referencia de la mano en la pose de descanso original del GLB.
         manoReposo = matrizManoDerecha;
-        std::cout << "Viejito listo: " << nVertices << " vertices, " << nHuesos
-                  << " huesos. Animacion por GPU." << std::endl;
     }
 
     bool estaListo() const { return listo; }
@@ -167,12 +165,12 @@ public:
 
     // Compatibilidad con pruebas anteriores de piernas.
     void animarPiernas(float izquierda, float derecha,
-                       float rodillaIzquierda=0.0f, float rodillaDerecha=0.0f,
-                       float pieIzquierdo=0.0f, float pieDerecho=0.0f) {
+        float rodillaIzquierda = 0.0f, float rodillaDerecha = 0.0f,
+        float pieIzquierdo = 0.0f, float pieDerecho = 0.0f) {
         PoseViejito pose;
-        pose.musloIzq=izquierda; pose.musloDer=derecha;
-        pose.rodillaIzq=rodillaIzquierda; pose.rodillaDer=rodillaDerecha;
-        pose.pieIzq=pieIzquierdo; pose.pieDer=pieDerecho;
+        pose.musloIzq = izquierda; pose.musloDer = derecha;
+        pose.rodillaIzq = rodillaIzquierda; pose.rodillaDer = rodillaDerecha;
+        pose.pieIzq = pieIzquierdo; pose.pieDer = pieDerecho;
         animarPose(pose);
     }
 
@@ -189,48 +187,48 @@ public:
 
     // El shader del viejito es propio. No interfiere con miShader del baston/canoa.
     void dibujar(const glm::mat4& modelo, const glm::mat4& vista,
-                 const glm::mat4& proyeccion) const {
+        const glm::mat4& proyeccion) const {
         if (!listo) return;
         glUseProgram(programa);
-        glUniformMatrix4fv(glGetUniformLocation(programa,"uModel"),1,GL_FALSE,glm::value_ptr(modelo));
-        glUniformMatrix4fv(glGetUniformLocation(programa,"uView"),1,GL_FALSE,glm::value_ptr(vista));
-        glUniformMatrix4fv(glGetUniformLocation(programa,"uProjection"),1,GL_FALSE,glm::value_ptr(proyeccion));
-        glUniformMatrix4fv(glGetUniformLocation(programa,"uBones[0]"),
-                           static_cast<GLsizei>(paleta.size()),GL_FALSE,glm::value_ptr(paleta[0]));
+        glUniformMatrix4fv(glGetUniformLocation(programa, "uModel"), 1, GL_FALSE, glm::value_ptr(modelo));
+        glUniformMatrix4fv(glGetUniformLocation(programa, "uView"), 1, GL_FALSE, glm::value_ptr(vista));
+        glUniformMatrix4fv(glGetUniformLocation(programa, "uProjection"), 1, GL_FALSE, glm::value_ptr(proyeccion));
+        glUniformMatrix4fv(glGetUniformLocation(programa, "uBones[0]"),
+            static_cast<GLsizei>(paleta.size()), GL_FALSE, glm::value_ptr(paleta[0]));
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, textura);
-        glUniform1i(glGetUniformLocation(programa,"uTexture"),0);
+        glUniform1i(glGetUniformLocation(programa, "uTexture"), 0);
         glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(indices.size()),GL_UNSIGNED_INT,nullptr);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
         glBindVertexArray(0);
-        glBindTexture(GL_TEXTURE_2D,0);
+        glBindTexture(GL_TEXTURE_2D, 0);
     }
 
     void liberar() {
-        if (EBO) glDeleteBuffers(1,&EBO);
-        if (VBO) glDeleteBuffers(1,&VBO);
-        if (VAO) glDeleteVertexArrays(1,&VAO);
-        if (textura) glDeleteTextures(1,&textura);
+        if (EBO) glDeleteBuffers(1, &EBO);
+        if (VBO) glDeleteBuffers(1, &VBO);
+        if (VAO) glDeleteVertexArrays(1, &VAO);
+        if (textura) glDeleteTextures(1, &textura);
         if (programa) glDeleteProgram(programa);
-        EBO=VBO=VAO=textura=programa=0;
-        listo=false;
+        EBO = VBO = VAO = textura = programa = 0;
+        listo = false;
     }
 
 private:
-    static constexpr std::uint32_t MAX_HUESOS=66;
+    static constexpr std::uint32_t MAX_HUESOS = 66;
     struct VerticeGPU {
         float p[3], n[3], uv[2];
         unsigned char huesos[4];
         float pesos[4];
     };
-    static_assert(sizeof(VerticeGPU)==52,"El formato ViejitoRig.bin requiere vertices de 52 bytes");
+    static_assert(sizeof(VerticeGPU) == 52, "El formato ViejitoRig.bin requiere vertices de 52 bytes");
     struct Nodo {
-        int padre=-1, hueso=-1;
+        int padre = -1, hueso = -1;
         std::string nombre;
-        glm::mat4 local=glm::mat4(1.0f), inversa=glm::mat4(1.0f);
+        glm::mat4 local = glm::mat4(1.0f), inversa = glm::mat4(1.0f);
         std::vector<int> hijos;
     };
-    GLuint VAO,VBO,EBO,textura,programa;
+    GLuint VAO, VBO, EBO, textura, programa;
     bool listo;
     int raiz;
     std::vector<VerticeGPU> vertices;
@@ -245,41 +243,45 @@ private:
     void recorrer(int id, const glm::mat4& padre, const PoseViejito& p) {
         const Nodo& nodo = nodos[id];
         glm::mat4 local = nodo.local;
-        float x=0.0f, y=0.0f, z=0.0f;
+        float x = 0.0f, y = 0.0f, z = 0.0f;
         const std::string& nombre = nodo.nombre;
 
-        if (nombre == "mixamorig:Hips")                 { x=p.caderaX; z=p.caderaZ; }
-        else if (nombre == "mixamorig:Spine")            { x=p.espalda; }
-        else if (nombre == "mixamorig:Spine1")           { x=p.espaldaMedia; }
-        else if (nombre == "mixamorig:Spine2")           { x=p.espaldaAlta; z=p.espaldaLateral; }
-        else if (nombre == "mixamorig:Neck")             { x=p.cuello; }
-        else if (nombre == "mixamorig:Head")             { y=p.cabezaY; }
-        else if (nombre == "mixamorig:LeftUpLeg")        { x=p.musloIzq; z=p.musloIzqZ; }
-        else if (nombre == "mixamorig:RightUpLeg")       { x=p.musloDer; z=p.musloDerZ; }
-        else if (nombre == "mixamorig:LeftLeg")          { x=p.rodillaIzq; }
-        else if (nombre == "mixamorig:RightLeg")         { x=p.rodillaDer; }
-        else if (nombre == "mixamorig:LeftFoot")         { x=p.pieIzq; }
-        else if (nombre == "mixamorig:RightFoot")        { x=p.pieDer; }
-        else if (nombre == "mixamorig:LeftArm")          { x=p.brazoIzqX; y=p.brazoIzqY; z=p.brazoIzqZ; }
-        else if (nombre == "mixamorig:LeftForeArm")      { x=p.codoIzqX; y=p.codoIzqY; z=p.codoIzqZ; }
-        else if (nombre == "mixamorig:RightArm")         { x=p.brazoDerX; y=p.brazoDerY; z=p.brazoDerZ; }
-        else if (nombre == "mixamorig:RightForeArm")     { x=p.codoDerX; y=p.codoDerY; z=p.codoDerZ; }
-        else if (nombre == "mixamorig:RightHand")        { x=p.munecaDerX; z=p.munecaDerZ; }
+        if (nombre == "mixamorig:Hips") { x = p.caderaX; z = p.caderaZ; }
+        else if (nombre == "mixamorig:Spine") { x = p.espalda; }
+        else if (nombre == "mixamorig:Spine1") { x = p.espaldaMedia; }
+        else if (nombre == "mixamorig:Spine2") { x = p.espaldaAlta; z = p.espaldaLateral; }
+        else if (nombre == "mixamorig:Neck") { x = p.cuello; }
+        else if (nombre == "mixamorig:Head") { y = p.cabezaY; }
+        else if (nombre == "mixamorig:LeftUpLeg") { x = p.musloIzq; z = p.musloIzqZ; }
+        else if (nombre == "mixamorig:RightUpLeg") { x = p.musloDer; z = p.musloDerZ; }
+        else if (nombre == "mixamorig:LeftLeg") { x = p.rodillaIzq; }
+        else if (nombre == "mixamorig:RightLeg") { x = p.rodillaDer; }
+        else if (nombre == "mixamorig:LeftFoot") { x = p.pieIzq; }
+        else if (nombre == "mixamorig:RightFoot") { x = p.pieDer; }
+        else if (nombre == "mixamorig:LeftArm") { x = p.brazoIzqX; y = p.brazoIzqY; z = p.brazoIzqZ; }
+        else if (nombre == "mixamorig:LeftForeArm") { x = p.codoIzqX; y = p.codoIzqY; z = p.codoIzqZ; }
+        else if (nombre == "mixamorig:RightArm") { x = p.brazoDerX; y = p.brazoDerY; z = p.brazoDerZ; }
+        else if (nombre == "mixamorig:RightForeArm") { x = p.codoDerX; y = p.codoDerY; z = p.codoDerZ; }
+        else if (nombre == "mixamorig:RightHand") { x = p.munecaDerX; z = p.munecaDerZ; }
         // Curl discreto de los dedos: rodean el eje fino del baston.
         // Se hace sobre sus huesos, sin modificar la malla ni el shader.
         else if (nombre == "mixamorig:RightHandIndex1" ||
-                 nombre == "mixamorig:RightHandMiddle1" ||
-                 nombre == "mixamorig:RightHandRing1" ||
-                 nombre == "mixamorig:RightHandPinky1")   { x=-24.0f*p.agarreDerecho; }
+            nombre == "mixamorig:RightHandMiddle1" ||
+            nombre == "mixamorig:RightHandRing1" ||
+            nombre == "mixamorig:RightHandPinky1") {
+            x = -24.0f * p.agarreDerecho;
+        }
         else if (nombre == "mixamorig:RightHandIndex2" ||
-                 nombre == "mixamorig:RightHandMiddle2" ||
-                 nombre == "mixamorig:RightHandRing2" ||
-                 nombre == "mixamorig:RightHandPinky2")   { x=-34.0f*p.agarreDerecho; }
-        else if (nombre == "mixamorig:RightHandThumb1")   { x=12.0f*p.agarreDerecho; }
+            nombre == "mixamorig:RightHandMiddle2" ||
+            nombre == "mixamorig:RightHandRing2" ||
+            nombre == "mixamorig:RightHandPinky2") {
+            x = -34.0f * p.agarreDerecho;
+        }
+        else if (nombre == "mixamorig:RightHandThumb1") { x = 12.0f * p.agarreDerecho; }
 
-        if (x!=0.0f) local=glm::rotate(local, glm::radians(x), glm::vec3(1,0,0));
-        if (y!=0.0f) local=glm::rotate(local, glm::radians(y), glm::vec3(0,1,0));
-        if (z!=0.0f) local=glm::rotate(local, glm::radians(z), glm::vec3(0,0,1));
+        if (x != 0.0f) local = glm::rotate(local, glm::radians(x), glm::vec3(1, 0, 0));
+        if (y != 0.0f) local = glm::rotate(local, glm::radians(y), glm::vec3(0, 1, 0));
+        if (z != 0.0f) local = glm::rotate(local, glm::radians(z), glm::vec3(0, 0, 1));
 
         glm::mat4 global = padre * local;
         if (nombre == "mixamorig:RightHand") {
@@ -293,14 +295,14 @@ private:
     }
 
     static GLuint compilar(GLenum tipo, const char* fuente) {
-        GLuint s=glCreateShader(tipo);
-        glShaderSource(s,1,&fuente,nullptr);
+        GLuint s = glCreateShader(tipo);
+        glShaderSource(s, 1, &fuente, nullptr);
         glCompileShader(s);
-        GLint ok=GL_FALSE;
-        glGetShaderiv(s,GL_COMPILE_STATUS,&ok);
+        GLint ok = GL_FALSE;
+        glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
         if (!ok) {
-            char log[2048]={};
-            glGetShaderInfoLog(s,sizeof(log),nullptr,log);
+            char log[2048] = {};
+            glGetShaderInfoLog(s, sizeof(log), nullptr, log);
             std::cerr << "ERROR VIEJITO RIG: Compilar shader: " << log << std::endl;
             glDeleteShader(s);
             return 0;

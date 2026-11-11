@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <fstream>
 #include <unordered_map>
+#include <cwctype>
+#include <cwchar>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -28,13 +30,26 @@
 #include "ViejitoRig.h" 
 #include "PescadorFisgaRigGPU_NaturalV3.h"
 
-// Fuerza el uso de la GPU dedicada en laptops con graficos hibridos (NVIDIA Optimus / AMD).
+// ============================================================================
+// EL CAMINO DE LAS ANIMAS | RECORRIDO CULTURAL INTERACTIVO (C++ / OpenGL 3.3)
+// ============================================================================
+// Este archivo coordina la escena 3D, los controles, las estaciones culturales,
+// las animaciones, el sonido y la disposicion de ventanas en Windows.
+//
+// Criterio para mantenimiento: las posiciones, escalas, curvas, tiempos,
+// transformaciones y teclas que aparecen aqui son valores validados visualmente.
+// No modificarlos sin repetir las pruebas de la experiencia completa.
+// ============================================================================
+
+// Solicita GPU dedicada en portatiles con graficos hibridos (Optimus / AMD).
 extern "C" {
     __declspec(dllexport) unsigned long NvOptimusEnablement = 1;
     __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 }
 
-// Cache de ubicaciones de uniforms
+// Consulta una ubicacion de uniform y la guarda por programa y nombre.
+// Evita consultas repetidas a OpenGL durante el renderizado de cada fotograma.
+// Nota: si se vuelve a enlazar un programa shader, se debera vaciar su cache.
 GLint ubicacionUniform(GLuint programa, const std::string& nombre) {
     static std::unordered_map<GLuint, std::unordered_map<std::string, GLint>> cache;
     auto& tabla = cache[programa];
@@ -50,6 +65,174 @@ GLint ubicacionUniform(GLuint programa, const std::string& nombre) {
 // =========================================================================
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
+
+#ifdef _WIN32
+// ============================================================================
+// DISTRIBUCION DE VENTANAS: URANDEN A LA IZQUIERDA, CONSOLA A LA DERECHA
+// ============================================================================
+// La consola tradicional expone un HWND visible. Windows Terminal puede usar
+// ConPTY y devolver un HWND oculto; por eso se localiza su ventana principal.
+// Estas rutinas se usan solo en Windows y conservan la presentacion validada.
+struct BusquedaTerminal {
+    std::wstring tituloUnico;
+    HWND coincidenciaPorTitulo = nullptr;
+    HWND unicaTerminal = nullptr;
+    int cantidadTerminales = 0;
+};
+
+// Identifica el proceso propietario de una ventana sin depender de su titulo.
+bool esVentanaDeWindowsTerminal(HWND hwnd) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == 0) return false;
+
+    HANDLE proceso = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proceso) return false;
+    wchar_t ruta[MAX_PATH] = {};
+    DWORD longitud = MAX_PATH;
+    bool obtenido = QueryFullProcessImageNameW(proceso, 0, ruta, &longitud) != 0;
+    CloseHandle(proceso);
+    if (!obtenido) return false;
+
+    std::wstring nombre(ruta);
+    for (wchar_t& c : nombre) c = (wchar_t)towlower(c);
+    return nombre.find(L"windowsterminal.exe") != std::wstring::npos ||
+        nombre.find(L"windowsterminalpreview.exe") != std::wstring::npos;
+}
+
+// Enumera ventanas principales visibles y busca el titulo de esta ejecucion.
+// El titulo incorpora el PID para evitar confundir varias instancias.
+BOOL CALLBACK enumerarTerminales(HWND hwnd, LPARAM parametro) {
+    if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER)) return TRUE;
+    auto& datos = *reinterpret_cast<BusquedaTerminal*>(parametro);
+    if (!esVentanaDeWindowsTerminal(hwnd)) return TRUE;
+
+    ++datos.cantidadTerminales;
+    datos.unicaTerminal = hwnd;
+
+    wchar_t titulo[512] = {};
+    GetWindowTextW(hwnd, titulo, 512);
+    if (std::wstring(titulo).find(datos.tituloUnico) != std::wstring::npos)
+        datos.coincidenciaPorTitulo = hwnd;
+    return TRUE;
+}
+
+// Prioridad: Console Host visible -> anfitrion Terminal -> titulo por PID.
+// Si no existe una coincidencia unica, no se mueve ninguna consola ajena.
+HWND localizarConsolaVisible(const std::wstring& tituloUnico) {
+    HWND consola = GetConsoleWindow();
+    if (!consola) return nullptr;
+
+    // Windows Console Host tradicional: este HWND SI es la ventana visible.
+    wchar_t clase[128] = {};
+    GetClassNameW(consola, clase, 128);
+    if (IsWindowVisible(consola) && wcscmp(clase, L"ConsoleWindowClass") == 0)
+        return consola;
+
+    // Algunos hosts de Windows Terminal devuelven el anfitrion como ancestro.
+    HWND raiz = GetAncestor(consola, GA_ROOTOWNER);
+    if (raiz && raiz != consola && IsWindowVisible(raiz) && esVentanaDeWindowsTerminal(raiz))
+        return raiz;
+
+    // ConPTY: buscar entre las ventanas reales de Windows Terminal.
+    BusquedaTerminal busqueda;
+    busqueda.tituloUnico = tituloUnico;
+    EnumWindows(enumerarTerminales, reinterpret_cast<LPARAM>(&busqueda));
+    if (busqueda.coincidenciaPorTitulo) return busqueda.coincidenciaPorTitulo;
+
+    // Fallback prudente para instalaciones que NO muestran el titulo de la app:
+    // elegir el Terminal solo si hay exactamente UNA ventana de ese programa.
+    return busqueda.cantidadTerminales == 1 ? busqueda.unicaTerminal : nullptr;
+}
+
+// Centra el par juego/consola dentro del area util del monitor.
+// Respeta la relacion 4:3 del juego y los minimos de tamano de Windows Terminal.
+// Se utilizan dimensiones externas de las ventanas para evitar superposicion.
+void organizarVentanasUranden(GLFWwindow* ventanaJuego, HWND consolaVisible) {
+    MONITORINFO mi = {};
+    mi.cbSize = sizeof(mi);
+    HMONITOR monitor = consolaVisible
+        ? MonitorFromWindow(consolaVisible, MONITOR_DEFAULTTONEAREST)
+        : MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+    if (!GetMonitorInfoW(monitor, &mi)) return;
+
+    const RECT area = mi.rcWork; // excluye la barra de tareas
+    const int margen = 14;
+    const int separacion = 4;
+    const int anchoDisponible = (area.right - area.left) - 2 * margen;
+    const int altoDisponible = (area.bottom - area.top) - 2 * margen;
+
+    int marcoIzq = 0, marcoArriba = 0, marcoDer = 0, marcoAbajo = 0;
+    glfwGetWindowFrameSize(ventanaJuego, &marcoIzq, &marcoArriba, &marcoDer, &marcoAbajo);
+    const int anchoMarco = marcoIzq + marcoDer;
+    const int altoMarco = marcoArriba + marcoAbajo;
+
+    int anchoConsola = 0, altoConsola = 0;
+    if (consolaVisible) {
+        if (IsZoomed(consolaVisible) || IsIconic(consolaVisible))
+            ShowWindow(consolaVisible, SW_RESTORE);
+
+        int anchoDeseado = std::min(560, std::max(350, anchoDisponible * 40 / 100));
+        int altoDeseado = std::min(625, altoDisponible);
+        SetWindowPos(consolaVisible, nullptr, 0, 0, anchoDeseado, altoDeseado,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+        // Las dimensiones pueden ser mayores que las solicitadas por el
+        // tamano minimo que imponga la fuente o Windows Terminal.
+        RECT rc = {};
+        if (GetWindowRect(consolaVisible, &rc)) {
+            anchoConsola = rc.right - rc.left;
+            altoConsola = rc.bottom - rc.top;
+        }
+    }
+
+    int anchoMaximoJuego = std::max(240, anchoDisponible - anchoConsola - anchoMarco
+        - (consolaVisible ? separacion : 0));
+    int altoMaximoJuego = std::max(180, altoDisponible - altoMarco);
+    int anchoJuego = std::min({ (int)SCR_WIDTH, anchoMaximoJuego, altoMaximoJuego * 4 / 3 });
+    int altoJuego = anchoJuego * 3 / 4;
+    glfwSetWindowSize(ventanaJuego, anchoJuego, altoJuego);
+
+    const int anchoGrupo = anchoJuego + anchoMarco + anchoConsola
+        + (consolaVisible ? separacion : 0);
+    const int altoGrupo = std::max(altoJuego + altoMarco, altoConsola);
+    int xGrupo = area.left + ((area.right - area.left) - anchoGrupo) / 2;
+    int yGrupo = area.top + ((area.bottom - area.top) - altoGrupo) / 2;
+    xGrupo = std::max((int)area.left + margen, xGrupo);
+    yGrupo = std::max((int)area.top + margen, yGrupo);
+
+    // GLFW usa coordenadas de la zona de contenido; consola usa marco exterior.
+    int xJuego = xGrupo + marcoIzq;
+    int yJuego = yGrupo + marcoArriba;
+    glfwSetWindowPos(ventanaJuego, xJuego, yJuego);
+
+    if (consolaVisible) {
+        const int xConsola = xGrupo + anchoJuego + anchoMarco + separacion;
+        SetWindowPos(consolaVisible, nullptr, xConsola, yGrupo, 0, 0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+#endif
+
+
+// =============================================================
+// NIVEL DEL AGUA Y DESFASES DE EMBARCACIONES (UNIDADES DE LA ESCENA)
+// ALTURA_AGUA_ESCENA: plano visible e impacto de la fisga (coordenada Y).
+// DIFERENCIA_ALTURA_AGUA: conserva el desplazamiento relativo de los botes.
+// AJUSTE_EXTRA_*: ajuste independiente de flotacion para cada conjunto.
+// AJUSTE_FISGA_Z: ubicacion horizontal del bote junto a la orilla.
+// Los valores actuales provienen de ajustes visuales de la escena final;
+// negativo en Y baja un modelo y positivo lo eleva.
+// =============================================================
+constexpr float ALTURA_AGUA_ESCENA = -0.99f;
+constexpr float ALTURA_AGUA_ORIGINAL = -0.88f;
+constexpr float DIFERENCIA_ALTURA_AGUA = ALTURA_AGUA_ESCENA - ALTURA_AGUA_ORIGINAL;
+// Ajuste vertical adicional del bote y pescador de fisga. Negativo = bajar.
+constexpr float AJUSTE_EXTRA_FISGA = -0.05f;
+// Ajuste horizontal en Z del bote de fisga. Positivo o negativo segun la direccion que necesites.
+constexpr float AJUSTE_FISGA_Z = 0.18f;
+constexpr float AJUSTE_EXTRA_PROCESION = 0.04f;
+constexpr float AJUSTE_EXTRA_MARIPOSEROS = 0.0f;
 
 Camera camera(glm::vec3(0.0f, 0.10f, 4.0f));
 
@@ -68,7 +251,8 @@ float intensidadGlobal = 2.3284f;
 bool baileViejitosActivo = true; // Control del baile con tecla J
 
 // =========================================================================
-// ESCALAS AJUSTADAS A 0.4f
+// PARAMETROS DE TRANSFORMACION DE PERSONAJES Y EMBARCACIONES
+// Estos valores no son una escala global: cada modelo usa su propia referencia.
 // =========================================================================
 
 // 1. Viejitos en la plaza
@@ -79,7 +263,7 @@ float rotacionViejitos = -109.633f;
 float factorEscalaBaston = 0.759367f; // Hereda el 0.4f de modeloViejito
 
 // 2. Pescador de la Fisga y su Bote
-glm::vec3 posBoteFisga(1.01965f, -0.772005f, -1.54735f);
+glm::vec3 posBoteFisga(1.01965f, -0.772005f + DIFERENCIA_ALTURA_AGUA + AJUSTE_EXTRA_FISGA, -1.54735f + AJUSTE_FISGA_Z);
 float yawBoteFisga = 3.45743f;
 float escalaFisgaGlobal = 0.25f;
 bool modoEdicionFisga = false; // Desactivado permanentemente: no existe tecla de edicion.
@@ -93,7 +277,7 @@ const float PIES_A_ORIGEN = 0.43f;
 
 // 4. Procesión de Canoas y Copaleras
 float escalaCanoaProcesion = 0.35f;
-float alturaCanoasProcesion = -0.210887f;
+float alturaCanoasProcesion = -0.210887f + DIFERENCIA_ALTURA_AGUA + AJUSTE_EXTRA_PROCESION;
 float escalaCopalera = 0.85f; // Hereda el 0.4f de canoaMat
 glm::vec3 offsetCopalera = glm::vec3(0.0f, 0.331801f, 0.05f);
 glm::vec3 offsetFuegoSahumador = glm::vec3(0.0f, 0.45f, 0.25f);
@@ -102,7 +286,9 @@ glm::vec3 offsetLuzProa = glm::vec3(0.0f, 0.30f, 2.5f);
 glm::vec3 offsetLuzPopa = glm::vec3(0.0f, 0.30f, -2.5f);
 
 // =========================================================================
-// LOGICA DE LANZAMIENTO DE FISGA (LUIS - ADAPTADA PARA LA ESCENA)
+// ANIMACION DE FISGA: POSES, INTERPOLACION Y TRAYECTORIA BALISTICA
+// La tecla K inicia la animacion; la P selecciona la vista de observacion.
+// La altura de impacto usa ALTURA_AGUA_ESCENA para seguir el plano de agua.
 // =========================================================================
 namespace UrandenFisga {
     const int MAX_FRAMES = 20;
@@ -117,7 +303,7 @@ namespace UrandenFisga {
     glm::vec3 origenSuelta(0.0f);
     bool fisgaClavada = false;
 
-    const float ALTURA_AGUA = -0.88f;
+    const float ALTURA_AGUA = ALTURA_AGUA_ESCENA; // Impacto de la fisga sincronizado con la superficie visual
     const float PROFUNDIDAD_CLAVADO = 0.06f;
     const float RAPIDEZ_HORIZONTAL = 2.20f;
     const float GRAVEDAD_FISGA = 6.5f;
@@ -131,6 +317,7 @@ namespace UrandenFisga {
     FRAME KeyFrame[MAX_FRAMES] = {};
     FRAME actual = {};
 
+    // Duracion de cada tramo entre poses, ajustada al numero de pasos.
     float duracionTramo(int tramo) {
         static const float segundos[18] = {
             0.38f, 0.42f, 0.40f, 0.38f, 0.36f,
@@ -142,6 +329,7 @@ namespace UrandenFisga {
         return base * (static_cast<float>(i_max_steps) / 28.0f);
     }
 
+    // Estima la pendiente de un canal para interpolar sin sobrepasar poses.
     float pendiente(int k, float FRAME::* campo) {
         if (FrameIndex < 2) return 0.0f;
         if (k <= 0) return (KeyFrame[1].*campo - KeyFrame[0].*campo) / duracionTramo(0);
@@ -154,6 +342,7 @@ namespace UrandenFisga {
         return (w0 + w1) / (w0 / d0 + w1 / d1);
     }
 
+    // Interpolacion Hermite acotada entre los valores de dos keyframes.
     float interpolarCanal(int tramo, float t, float FRAME::* campo) {
         const float a = KeyFrame[tramo].*campo, b = KeyFrame[tramo + 1].*campo;
         const float h = duracionTramo(tramo);
@@ -164,6 +353,8 @@ namespace UrandenFisga {
         return std::max(std::min(a, b), std::min(v, std::max(a, b)));
     }
 
+    // Calcula la pose del pescador en un instante normalizado del tramo.
+    // La liberacion de la fisga se realiza al cruzar su instante de suelta.
     FRAME interpolar(int tramo, float t) {
         t = std::max(0.0f, std::min(1.0f, t));
         FRAME r = {};
@@ -183,6 +374,7 @@ namespace UrandenFisga {
         return r;
     }
 
+    // Movimiento de la fisga ya liberada: velocidad bajo gravedad constante.
     glm::vec3 velocidadFisgaEn(float t) {
         return velocidadSalida + glm::vec3(0.0f, -GRAVEDAD_FISGA * t, 0.0f);
     }
@@ -195,6 +387,8 @@ namespace UrandenFisga {
         const float longPunta = 0.70f * ::escalaFisgaGlobal * (0.55f + 0.949265f);
         return centroFisgaEn(t).y + longPunta * punta.y;
     }
+    // Busca por biseccion el instante en que la punta penetra el agua.
+    // Se mantiene la profundidad actual de clavado por coherencia visual.
     float calcularTiempoImpacto() {
         const float alturaObjetivo = ALTURA_AGUA - PROFUNDIDAD_CLAVADO;
         float a = 0.0f, b = 3.0f;
@@ -207,6 +401,7 @@ namespace UrandenFisga {
         return b;
     }
 
+    // Carga las poses fijas y restaura el estado inicial del lanzamiento.
     void precargarAnimacion() {
         const FRAME poses[] = {
             { 0.00f,  -8.00f,  1.00f,  -25.00f,  2.00f,  1.00f,  4.00f,  38.00f, 0.0f, 0.0f, 0.0f },
@@ -242,6 +437,8 @@ namespace UrandenFisga {
         tiempoObservacion = 0.0f;
     }
 
+    // Avanza los keyframes y conserva la observacion tras el lanzamiento.
+    // Los guardas de edicion heredados permanecen inactivos en esta version.
     void Animation(float dt) {
         if (::modoEdicionFisga) return;
 
@@ -266,7 +463,8 @@ namespace UrandenFisga {
                 playIndex = 0;
                 observandoCaida = (FrameIndex == 19 && fisgaLiberada);
                 tiempoObservacion = 0.0f;
-                std::cout << ">> Termino lanzamiento: pescador observa la caida." << std::endl;
+                // Avisar al visitante al finalizar el lanzamiento, sin mostrar estados internos.
+                std::cout << "[INFO] Lanzamiento de fisga finalizado.\n";
                 break;
             }
         }
@@ -276,6 +474,7 @@ namespace UrandenFisga {
         }
     }
 
+    // Reinicia un lanzamiento solo cuando no hay otro en curso.
     void IniciarLanzamiento() {
         if (!play && !::modoEdicionFisga) {
             actual = KeyFrame[0];
@@ -287,13 +486,13 @@ namespace UrandenFisga {
             observandoCaida = false;
             tiempoObservacion = 0.0f;
             play = true;
-            std::cout << ">> Animacion de Fisga Iniciada." << std::endl;
+            std::cout << "[INFO] Lanzamiento de fisga iniciado.\n";
         }
     }
 }
 
 // =========================================================================
-// 2. DATOS DE ESCENA Y TRAYECTORIAS FIJAS
+// 2. DATOS DE ESCENA: LUCES, ESTACIONES Y TRAYECTORIAS PREDEFINIDAS
 // =========================================================================
 glm::vec3 offsetMuelle = glm::vec3(-3.5f, 0.0f, 0.0f);
 
@@ -366,15 +565,9 @@ std::vector<FocoEstructura> focosLetras = {
 int estacionActivaHUD = -1;
 bool eKeyPressed = false;
 
-std::vector<glm::vec3> puntosCircuito = {
-    glm::vec3(-1.0f, -0.65f,  0.5f), glm::vec3(-1.1f, -0.65f,  3.5f),
-    glm::vec3(-1.1f, -0.65f,  6.5f), glm::vec3(-0.9f, -0.65f,  9.5f),
-    glm::vec3(-0.4f, -0.65f, 12.0f), glm::vec3(0.4f, -0.65f, 13.5f),
-    glm::vec3(1.1f, -0.65f, 12.0f),  glm::vec3(1.5f, -0.65f,  9.5f),
-    glm::vec3(1.6f, -0.65f,  6.5f),  glm::vec3(1.5f, -0.65f,  3.5f),
-    glm::vec3(1.0f, -0.65f,  0.5f),  glm::vec3(0.0f, -0.65f, -0.6f)
-};
-
+// Cada estacion detecta proximidad horizontal (X,Z) y activa su cedula con E.
+// El ultimo campo pertenece al estado historico de la estructura; se conserva
+// para no alterar su formato ni la inicializacion durante el cierre del proyecto.
 struct Estacion { glm::vec3 posicion; float radioDeteccion; bool interactuable; bool activa; };
 std::vector<Estacion> estaciones = {
     {glm::vec3(-1.40175f, 0.0f, 1.49381f), 3.0f, false, false},
@@ -397,6 +590,8 @@ float tiempoProcesion = 0.0f;
 const int NUM_CANOAS_PROC = 5;
 const float VEL_PROCESION = 1.2f, ACEL_PROCESION = 1.5f, ESPACIO_CANOAS = 1.8f, FRENADO_PROCESION = 0.6f, LATERAL_ATRAQUE = 0.7f, GIRO_ATRAQUE = 0.5f;
 
+// Puntos guia de las cinco canoas. Las curvas se muestrean al iniciar;
+// la animacion posterior se evalua por distancia recorrida, no por indice.
 const std::vector<glm::vec3> puntosProcesion = {
     glm::vec3(-1.60839f, -0.65f, -0.249108f), glm::vec3(-1.34177f, -0.65f,  0.640236f),
     glm::vec3(-1.27887f, -0.65f,  1.4768f),   glm::vec3(-1.19585f, -0.65f,  2.7161f),
@@ -429,6 +624,8 @@ const float skyboxVertices[] = {
      1.0f, -1.0f, -1.0f,  -1.0f, -1.0f,  1.0f,   1.0f, -1.0f,  1.0f
 };
 
+// Detecta un unico evento al presionar, evitando repeticiones por frame.
+// Util para cambios de camara y disparo de animaciones.
 bool teclaPulsada(GLFWwindow* window, int tecla) {
     static bool estado[GLFW_KEY_LAST + 1] = { false };
     bool ahora = glfwGetKey(window, tecla) == GLFW_PRESS;
@@ -437,6 +634,7 @@ bool teclaPulsada(GLFWwindow* window, int tecla) {
     return pulsada;
 }
 
+// Rota una pieza articulada alrededor de un pivote en coordenadas locales.
 glm::mat4 rotarEnPivote(const glm::mat4& M, const glm::vec3& pivote, float grados, const glm::vec3& eje) {
     glm::mat4 r = glm::translate(M, pivote);
     r = glm::rotate(r, glm::radians(grados), eje);
@@ -444,9 +642,11 @@ glm::mat4 rotarEnPivote(const glm::mat4& M, const glm::vec3& pivote, float grado
 }
 
 // =========================================================================
-// A1: EXHIBICION DE LOS MARIPOSEROS 
+// MARIPOSEROS: CINEMATICA POR ARTICULACIONES Y FOTOGRAMAS CLAVE
+// El movimiento se reproduce automaticamente; tambien puede cargarse
+// desde animaciones/A1_mariposeros.txt si existe. 
 // =========================================================================
-glm::vec3 posCanoaA1 = glm::vec3(-1.87317f, -0.806756f, 10.7197f);
+glm::vec3 posCanoaA1 = glm::vec3(-1.87317f, -0.806756f + DIFERENCIA_ALTURA_AGUA + AJUSTE_EXTRA_MARIPOSEROS, 10.7197f);
 float yawCanoaA1 = 101.509f;
 bool reproduciendoA1 = true;
 float tiempoAnimA1 = 0.0f;
@@ -475,18 +675,13 @@ struct PoseA1 {
 PoseA1 poseA1 = {};
 
 const int NUM_ARTIC_A1 = 12;
-const char* NOMBRES_ARTIC_A1[NUM_ARTIC_A1] = {
-    "torso", "cadera", "rodilla", "hombroExtFrente", "hombroExtLado", "codoExt",
-    "hombroIntFrente", "hombroIntLado", "codoInt", "redInclinacion", "redLado", "redApertura"
-};
+// Acceso indexado a los doce canales de una pose de mariposero.
 float* articA1(PoseA1& p, int i) {
     float* campos[NUM_ARTIC_A1] = {
         &p.torso, &p.cadera, &p.rodilla, &p.hombroExtFrente, &p.hombroExtLado, &p.codoExt,
         &p.hombroIntFrente, &p.hombroIntLado, &p.codoInt, &p.redInclinacion, &p.redLado, &p.redApertura };
     return campos[i];
 }
-int articSeleccionadaA1 = -1;
-
 std::vector<PoseA1> keyframesA1 = {
     {  0,  0,  0,   0,   0,  0,   0,   0,  0,    0,   0,   0 },
     { -5,  0,  3,  10,  -5, 10,   5, -15, 35,   20,   0,   0 },
@@ -504,6 +699,9 @@ std::vector<PoseA1> keyframesA1 = {
     {  0,  0,  0,   0,   0,  0,   0,   0,  0,    0,   0,   0 }
 };
 
+// Mezcla linealmente las articulaciones de dos poses consecutivas.
+// El const_cast heredado solo se usa para lectura; se conserva para
+// minimizar cualquier cambio de comportamiento en la entrega final.
 PoseA1 interpolarPose(const PoseA1& a, const PoseA1& b, float t) {
     PoseA1 r;
     PoseA1& ra = const_cast<PoseA1&>(a);
@@ -513,16 +711,8 @@ PoseA1 interpolarPose(const PoseA1& a, const PoseA1& b, float t) {
     return r;
 }
 
-bool guardarKeyframesA1(const char* ruta) {
-    std::ofstream f(ruta);
-    if (!f.is_open()) return false;
-    f << keyframesA1.size() << "\n";
-    for (auto& kf : keyframesA1) {
-        for (int i = 0; i < NUM_ARTIC_A1; i++) f << *articA1(kf, i) << (i + 1 < NUM_ARTIC_A1 ? " " : "\n");
-    }
-    return true;
-}
-
+// Sustituye los fotogramas predefinidos solo si el archivo es valido.
+// La ausencia del archivo no impide iniciar la animacion.
 bool cargarKeyframesA1(const char* ruta) {
     std::ifstream f(ruta);
     if (!f.is_open()) return false;
@@ -538,13 +728,15 @@ bool cargarKeyframesA1(const char* ruta) {
 }
 
 // =========================================================================
-// 3. FUNCIONES AUXILIARES
+// 3. FUNCIONES AUXILIARES: CURVAS, RECORRIDOS Y MALLA DE AGUA
 // =========================================================================
+// Catmull-Rom: curva suave que atraviesa los puntos de control centrales.
 glm::vec3 calcularCatmullRom(const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, float t) {
     float t2 = t * t, t3 = t2 * t;
     return 0.5f * ((2.0f * p1) + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
 }
 
+// Acumula la longitud de arco y evita duplicar puntos consecutivos.
 void agregarPunto(RutaCanoa& r, const glm::vec3& p) {
     if (!r.pts.empty()) {
         float d = glm::distance(r.pts.back(), p);
@@ -561,6 +753,7 @@ void muestrearCatmull(RutaCanoa& r, const std::vector<glm::vec3>& c, const glm::
         for (int j = 0; j <= muestras; j++) agregarPunto(r, calcularCatmullRom(e[i - 1], e[i], e[i + 1], e[i + 2], (float)j / muestras));
 }
 
+// Bezier cubica para suavizar la entrada de cada canoa al atraque.
 void muestrearBezier(RutaCanoa& r, const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, int muestras) {
     for (int j = 0; j <= muestras; j++) {
         float t = (float)j / muestras, u = 1.0f - t;
@@ -568,6 +761,8 @@ void muestrearBezier(RutaCanoa& r, const glm::vec3& p0, const glm::vec3& p1, con
     }
 }
 
+// Precalcula una ruta para cada embarcacion, desde la formacion inicial
+// hasta su lugar de aparcamiento. No se reconstruye cada fotograma.
 void construirRutasProcesion() {
     rutasProcesion.clear();
     const glm::vec3 inicio = puntosProcesion[0];
@@ -592,6 +787,7 @@ void construirRutasProcesion() {
     }
 }
 
+// Evalua posicion y orientacion a una distancia sobre la ruta muestreada.
 void evaluarRuta(const RutaCanoa& r, float d, glm::vec3& pos, float& yaw) {
     if (d <= 0.0f) d = 0.0f; if (d >= r.dist.back()) d = r.dist.back();
     size_t j = std::upper_bound(r.dist.begin(), r.dist.end(), d) - r.dist.begin();
@@ -603,11 +799,14 @@ void evaluarRuta(const RutaCanoa& r, float d, glm::vec3& pos, float& yaw) {
     yaw = glm::degrees(std::atan2(dir.x, dir.z));
 }
 
+// Aplica aceleracion inicial antes de continuar a velocidad constante.
 float avanceProcesion(float t) {
     if (t < ACEL_PROCESION) return VEL_PROCESION * t * t / (2.0f * ACEL_PROCESION);
     return VEL_PROCESION * (t - ACEL_PROCESION * 0.5f);
 }
 
+// Genera una malla indexada horizontal con posicion, normal y UV.
+// El desplazamiento vertical se aplica posteriormente con la matriz model.
 void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices, std::vector<unsigned int>& indices) {
     float paso = tamano / (float)resolucion, mitad = tamano / 2.0f;
     for (int i = 0; i <= resolucion; ++i) {
@@ -628,7 +827,9 @@ void generarPlanoAgua(int resolucion, float tamano, std::vector<float>& vertices
 }
 
 // =========================================================================
-// LOGICA COMPLETA: BAILE DE LOS VIEJITOS (LUIS)
+// DANZA DE LOS VIEJITOS: MAQUINA DE ESTADOS Y ANIMACION PROCEDURAL
+// Cada estado compone una pose y desplazamientos para el modelo y el baston.
+// La tecla J pausa o reanuda el avance del tiempo de animacion.
 // =========================================================================
 static constexpr float PI_BAILE = 3.14159265358979323846f;
 enum EstadoBaile { REPOSO = 0, SALTO_IZQUIERDA = 1, SALTO_DERECHA = 2, SALTO_ADELANTE = 3, RETROCESO_1 = 4, RETROCESO_2 = 5, RETROCESO_3 = 6, RETROCESO_4 = 7, PASO_DERECHO_BASTON = 8, PASO_IZQUIERDO = 9, ZAP_DERECHO_1 = 10, ZAP_IZQUIERDO = 11, ZAP_DERECHO_2 = 12, REMATE = 13 };
@@ -639,6 +840,7 @@ static float suavizar(float x) { x = limitar01(x); return x * x * (3.0f - 2.0f *
 static float alzarPie(float t) { if (t <= 0.53f) return suavizar(t / 0.53f); if (t < 0.77f) return 1.0f - suavizar((t - 0.53f) / 0.24f); return 0.0f; }
 static float impacto(float t) { if (t <= 0.77f || t >= 0.97f) return 0.0f; return std::sin(PI_BAILE * (t - 0.77f) / 0.20f); }
 
+// Postura de referencia sobre la que se aplican las variaciones de danza.
 static PoseViejito posturaBase() {
     PoseViejito p; p.espalda = 8.0f; p.espaldaMedia = 6.0f; p.espaldaAlta = 4.0f; p.cuello = -4.0f;
     p.musloIzq = -5.0f; p.musloDer = -5.0f; p.rodillaIzq = 15.0f; p.rodillaDer = 15.0f; p.pieIzq = -6.0f; p.pieDer = -6.0f;
@@ -647,6 +849,8 @@ static PoseViejito posturaBase() {
     return p;
 }
 
+// Devuelve la pose del estado activo y sus desplazamientos asociados.
+// t pertenece al intervalo [0,1]; reloj controla oscilaciones secundarias.
 static PoseViejito calcularBaile(int estado, float t, float reloj, float& posX, float& posY, float& posZ, float& bastonZ, float& bastonX) {
     PoseViejito p = posturaBase();
     posX = posY = posZ = bastonZ = bastonX = 0.0f;
@@ -731,10 +935,11 @@ static PoseViejito calcularBaile(int estado, float t, float reloj, float& posX, 
 }
 
 // =========================================================================
-// 4. ENTRADA, CONTROL Y TOPOGRAFIA
+// 4. ENTRADA, CAMARAS, DETECCION DE TERRENO E INTERACCIONES
 // =========================================================================
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) { glViewport(0, 0, width, height); }
 
+// Actualiza la orientacion de la camara en funcion del movimiento del mouse.
 void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
     float xpos = static_cast<float>(xposIn), ypos = static_cast<float>(yposIn);
     if (firstMouse) { lastX = xpos; lastY = ypos; firstMouse = false; }
@@ -749,6 +954,8 @@ void fijarCamara(const glm::vec3& pos, float pitch, float yaw) {
 struct TrianguloTerreno { glm::vec3 a, b, c; float minX, maxX, minZ, maxZ; };
 std::vector<TrianguloTerreno> mallaTerreno;
 
+// Convierte los triangulos del mapa a coordenadas de mundo y guarda sus
+// limites en X/Z para acelerar la consulta de altura de caminata.
 void construirColisionadorTerreno(Model& mapa) {
     mallaTerreno.clear();
     glm::mat4 M = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.2f, 0.0f)), glm::vec3(0.2f));
@@ -763,6 +970,8 @@ void construirColisionadorTerreno(Model& mapa) {
     }
 }
 
+// Obtiene la altura del terreno por coordenadas baricentricas en el plano XZ.
+// Si no hay triangulo valido, utiliza la altura de respaldo establecida.
 float obtenerAlturaTerreno(float x, float z, float alturaActual = -0.20f) {
     float mejorY = -100.0f; bool encontrado = false;
     for (const auto& t : mallaTerreno) {
@@ -781,6 +990,34 @@ float obtenerAlturaTerreno(float x, float z, float alturaActual = -0.20f) {
     return std::max(alturaActual, -0.45f);
 }
 
+// Guía de consulta rápida. Se muestra una sola vez al completar la carga.
+// Los mensajes posteriores se reservan para acciones, proximidad y errores.
+void mostrarGuiaConsola() {
+    std::cout
+        << "\n========================================\n"
+        << "         EL CAMINO DE LAS ANIMAS\n"
+        << "========================================\n"
+        << "[OK] Recorrido listo para explorar.\n\n"
+        << "CONTROLES PRINCIPALES\n"
+        << "  WASD        Moverse\n"
+        << "  Mouse       Mirar alrededor\n"
+        << "  C           Caminar / camara libre\n"
+        << "  Q / R       Bajar / subir (libre)\n"
+        << "  E           Leer cedula cultural\n"
+        << "  5           Activar / desactivar dron\n"
+        << "  7 8 9 0 P   Vistas de camara\n"
+        << "  6 / Espacio Iniciar procesion\n"
+        << "  J           Pausar / reanudar danza\n"
+        << "  K           Lanzar fisga\n"
+        << "  ESC         Salir\n"
+        << "----------------------------------------\n"
+        << "Acercate a una estacion y presiona E.\n\n";
+}
+
+// Controles del visitante (sin edicion de transformaciones):
+// WASD: movimiento; mouse: mirada; C: caminar/libre; Q/R: vertical en libre.
+// E: cedula; 5: dron; 7/8/9/0/P: camaras; 6/Espacio: procesion;
+// K: lanzamiento de fisga; J: pausa de baile; ESC: cerrar.
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) glfwSetWindowShouldClose(window, true);
 
@@ -789,8 +1026,8 @@ void processInput(GLFWwindow* window) {
         modoDron = false;
         modoCaminataPOV = !modoCaminataPOV;
         std::cout << (modoCaminataPOV
-            ? ">> CAMARA: CAMINATA POV (ajuste al terreno y efecto de pasos)\n"
-            : ">> CAMARA: LIBRE (sin efecto de pasos) | Q bajar, R subir\n");
+            ? "[CAMARA] Modo caminata activado.\n"
+            : "[CAMARA] Modo libre: Q bajar, R subir.\n");
     }
 
     // Movimiento habitual del visitante.
@@ -810,24 +1047,49 @@ void processInput(GLFWwindow* window) {
         if (!eKeyPressed) {
             eKeyPressed = true;
             for (int i = 0; i < (int)estaciones.size(); i++) {
-                if (estaciones[i].interactuable) { estacionActivaHUD = (estacionActivaHUD == i) ? -1 : i; break; }
+                if (estaciones[i].interactuable) {
+                    // E abre o cierra la cedula de la estacion cercana.
+                    estacionActivaHUD = (estacionActivaHUD == i) ? -1 : i;
+                    if (estacionActivaHUD != -1) {
+                        const char* nombresEstaciones[] = {
+                            "Copaleras y purificacion",
+                            "Rescate de los manantiales",
+                            "Danzas y cocina tradicional",
+                            "Procesion de canoas"
+                        };
+                        std::cout << "[CULTURA] " << nombresEstaciones[i]
+                            << ". Presiona E para cerrar.\n";
+                    }
+                    break;
+                }
             }
         }
     }
     else eKeyPressed = false;
 
-    if (teclaPulsada(window, GLFW_KEY_6) || teclaPulsada(window, GLFW_KEY_SPACE)) { animacionProcesionActiva = true; tiempoProcesion = 0.0f; }
+    if (teclaPulsada(window, GLFW_KEY_6) || teclaPulsada(window, GLFW_KEY_SPACE)) {
+        animacionProcesionActiva = true;
+        tiempoProcesion = 0.0f;
+        std::cout << "[INFO] Procesion de canoas iniciada.\n";
+    }
     if (teclaPulsada(window, GLFW_KEY_7)) { modoDron = false; modoCaminataPOV = false; fijarCamara(glm::vec3(0.0f, 6.5f, 5.0f), -35.0f, -90.0f); }
     if (teclaPulsada(window, GLFW_KEY_8)) { modoDron = false; modoCaminataPOV = true; fijarCamara(glm::vec3(4.5f, obtenerAlturaTerreno(4.5f, -12.5f) + 0.25f, -12.5f), -5.0f, -135.0f); }
     if (teclaPulsada(window, GLFW_KEY_9)) { modoDron = false; modoCaminataPOV = false; fijarCamara(glm::vec3(2.8f, 0.2f, 14.5f), -5.0f, 40.0f); }
     if (teclaPulsada(window, GLFW_KEY_0)) { modoDron = false; modoCaminataPOV = false; fijarCamara(glm::vec3(-0.6f, -0.2f, 10.7f), -8.0f, -170.0f); }
     if (teclaPulsada(window, GLFW_KEY_P)) { modoDron = false; modoCaminataPOV = false; fijarCamara(glm::vec3(1.02f, -0.35f, -0.2f), -10.0f, -90.0f); }
-    if (teclaPulsada(window, GLFW_KEY_5)) modoDron = !modoDron;
+    if (teclaPulsada(window, GLFW_KEY_5)) {
+        modoDron = !modoDron;
+        std::cout << (modoDron ? "[CAMARA] Dron activado.\n" : "[CAMARA] Dron desactivado.\n");
+    }
     if (teclaPulsada(window, GLFW_KEY_K)) UrandenFisga::IniciarLanzamiento();
-    if (teclaPulsada(window, GLFW_KEY_J)) baileViejitosActivo = !baileViejitosActivo;
+    if (teclaPulsada(window, GLFW_KEY_J)) {
+        baileViejitosActivo = !baileViejitosActivo;
+        std::cout << (baileViejitosActivo ? "[INFO] Danza reanudada.\n" : "[INFO] Danza pausada.\n");
+    }
 
 }
 
+// Actualiza el contador de fotogramas una vez por segundo en el titulo.
 void showFPS(GLFWwindow* window) {
     double currentTime = glfwGetTime(); nbFrames++;
     if (currentTime - lastFpsTime >= 1.0) {
@@ -837,21 +1099,51 @@ void showFPS(GLFWwindow* window) {
 }
 
 // =========================================================================
-// 5. FUNCIÓN PRINCIPAL
+// 5. INICIALIZACION, BUCLE DE RENDERIZADO Y LIBERACION DE RECURSOS
 // =========================================================================
 int main() {
+    // Inicializar OpenGL 3.3 Core. La ventana permanece oculta durante la carga.
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Evita mostrar una pantalla blanca mientras carga
 
     GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "El Camino de las Animas", NULL, NULL);
-    if (!window) { glfwTerminate(); return -1; }
+    if (!window) {
+        std::cerr << "[ERROR] No se pudo crear la ventana del recorrido.\n";
+        glfwTerminate();
+        return -1;
+    }
+
 #ifdef _WIN32
-    HWND consoleWindow = GetConsoleWindow();
-    if (consoleWindow) SetWindowPos(consoleWindow, NULL, 0, 0, 600, 600, SWP_NOZORDER);
+    // Establecer un titulo unico ayuda a identificar la pestaña de ESTA consola.
+    // Con Windows Terminal, GetConsoleWindow() devuelve un HWND interno invisible.
+    const std::wstring tituloConsola = L"Uranden - Consola [" +
+        std::to_wstring(GetCurrentProcessId()) + L"]";
+    SetConsoleTitleW(tituloConsola.c_str());
+
+    HWND consolaVisible = nullptr;
+    for (int intento = 0; intento < 12 && !consolaVisible; ++intento) {
+        consolaVisible = localizarConsolaVisible(tituloConsola);
+        if (!consolaVisible) Sleep(70); // Windows Terminal actualiza su titulo de forma asincrona
+    }
+    // Posicionar ambas ventanas antes de mostrar el primer fotograma.
+    organizarVentanasUranden(window, consolaVisible);
+    if (!consolaVisible) {
+        std::cerr << "[AVISO] No se detecto la ventana de consola; "
+            "Uranden se centro de forma independiente.\n";
+    }
+#else
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    const GLFWvidmode* modo = monitor ? glfwGetVideoMode(monitor) : nullptr;
+    if (modo) glfwSetWindowPos(window, (modo->width - (int)SCR_WIDTH) / 2,
+        (modo->height - (int)SCR_HEIGHT) / 2);
 #endif
-    glfwSetWindowPos(window, 620, 50);
+    // Aviso temprano: aparece durante la carga de recursos, antes del primer fotograma.
+    // La compilacion de Visual Studio ocurre antes de iniciar este ejecutable.
+    std::cout << "[CARGANDO] Preparando el recorrido...\n" << std::flush;
+
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
@@ -859,9 +1151,13 @@ int main() {
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     glewExperimental = GL_TRUE;
-    if (glewInit() != GLEW_OK) return -1;
+    if (glewInit() != GLEW_OK) {
+        std::cerr << "[ERROR] No se pudo inicializar OpenGL (GLEW).\n";
+        return -1;
+    }
     glEnable(GL_DEPTH_TEST);
 
+    // Cargar programas de sombreado y crear geometria de apoyo.
     Shader miShader("shader/shader.vert", "shader/shader.frag");
     Shader skyboxShader("shader/skybox.vert", "shader/skybox.frag");
     Shader waterShader("shader/water.vert", "shader/water.frag");
@@ -889,6 +1185,8 @@ int main() {
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float))); glEnableVertexAttribArray(2);
     glBindVertexArray(0);
 
+    // Cargar los recursos 3D antes de iniciar el bucle de dibujo.
+    // Las rutas son relativas al directorio de trabajo de Visual Studio.
     Model modeloCanoa("Models/canoa.obj");
     Model modeloCanoaPro("Models/canoaPro.obj");
     Model modeloCopalera("Models/copalera.gltf");
@@ -918,7 +1216,10 @@ int main() {
     float tiempoEstado1 = 0.0f, tiempoEstado2 = 0.0f, ritmoViejitos = 1.0f, relojCuerpo1 = 0.0f, relojCuerpo2 = 1.5f;
     int vueltasBaile = 0;
 
-    if (cargarKeyframesA1(ARCHIVO_KF_A1)) std::cout << "A1: keyframes cargados.\n";
+    // Si no existe el archivo externo, quedan disponibles los fotogramas predefinidos.
+    if (!cargarKeyframesA1(ARCHIVO_KF_A1))
+        std::cerr << "[AVISO] No se pudieron cargar los keyframes de mariposeros; "
+        "se usaran los movimientos integrados.\n";
 
     auto dibujar = [&](Model& m, const glm::mat4& M) {
         glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(M));
@@ -967,11 +1268,14 @@ int main() {
         dibujar(mAlaDer, rotarEnPivote(mango, P_EJE_ALAS, -poseA1.redApertura, EJE_Y));
         };
 
+    // Musica y ambiente se reproducen de forma independiente y en bucle.
     AudioEngine audioEngine;
-    if (!audioEngine.init()) std::cerr << "Audio error\n";
+    if (!audioEngine.init())
+        std::cerr << "[ERROR] No se pudo inicializar el audio.\n";
     audioEngine.playMusic("audio/Ofrenda_en_el_Agua.mp3", 0.35f, true);
     audioEngine.playAmbient("audio/ambiente.mp3", 0.25f, true);
 
+    // HUD cultural: muestra una de las cuatro cedulas si existe estacion activa.
     Shader hudShader("shader/hud.vs", "shader/hud.fs");
     unsigned int hudVAO, hudVBO;
     float hudVertices[] = { 0,1,0,1, 1,0,1,0, 0,0,0,0, 0,1,0,1, 1,1,1,1, 1,0,1,0 };
@@ -984,11 +1288,20 @@ int main() {
     unsigned int texCedula3 = SOIL_load_OGL_texture("Models/textures/3_Procesion-de-Canoas.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
     unsigned int texCedula4 = SOIL_load_OGL_texture("Models/textures/4_El-rescate-de-los-manantiales.png", SOIL_LOAD_RGBA, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
 
+    // Avisar solamente de las cedulas que no se cargaron correctamente.
+    if (texCedula1 == 0 || texCedula2 == 0 || texCedula3 == 0 || texCedula4 == 0)
+        std::cerr << "[AVISO] Una o mas cedulas culturales no se pudieron cargar.\n";
+
+    mostrarGuiaConsola();
+
+    // Bucle principal: entrada -> animacion -> escena -> agua -> HUD -> pantalla.
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
+        // El modo caminata usa altura de terreno y una oscilacion de pasos.
+        // En camara libre y dron no se aplica la correccion de altura.
         glm::vec3 posCamaraAnterior = camera.Position;
         processInput(window);
 
@@ -1011,12 +1324,17 @@ int main() {
             estaciones[i].interactuable = (glm::distance(glm::vec2(camera.Position.x, camera.Position.z), glm::vec2(estaciones[i].posicion.x, estaciones[i].posicion.z)) <= estaciones[i].radioDeteccion);
             if (estaciones[i].interactuable) cercaDeAlguna = true;
         }
+        // Un aviso por aproximacion; abrir/cerrar la cedula no repite el mensaje.
         static bool mensajeMostrado = false;
-        if (cercaDeAlguna && estacionActivaHUD == -1) {
-            if (!mensajeMostrado) { std::cout << "\n>> [ESTACION CERCANA] Presiona 'E' para leer." << std::endl; mensajeMostrado = true; }
+        if (cercaDeAlguna) {
+            if (!mensajeMostrado && estacionActivaHUD == -1) {
+                std::cout << "[CULTURA] Estacion cercana. Presiona E para leer.\n";
+                mensajeMostrado = true;
+            }
         }
         else mensajeMostrado = false;
 
+        // La toma dron describe una orbita temporal alrededor del escenario.
         if (modoDron) {
             camera.Position = glm::vec3(0.0f, 0.0f, 6.0f) + glm::vec3(std::sin(currentFrame * 0.12f) * 16.0f, 7.5f + 1.2f * std::sin(currentFrame * 0.4f), std::cos(currentFrame * 0.12f) * 16.0f);
             glm::vec3 dir = glm::normalize(glm::vec3(0.0f, 0.0f, 6.0f) - camera.Position);
@@ -1024,6 +1342,7 @@ int main() {
             camera.ProcessMouseMovement(0.0f, 0.0f);
         }
 
+        // Evaluar las cinco rutas de la procesion segun el reloj acumulado.
         if (animacionProcesionActiva) tiempoProcesion += deltaTime;
         float avance = animacionProcesionActiva ? avanceProcesion(tiempoProcesion) : 0.0f;
         for (int k = 0; k < NUM_CANOAS_PROC; k++) {
@@ -1033,6 +1352,7 @@ int main() {
             evaluarRuta(rutasProcesion[k], d, posProc[k], yawProc[k]);
         }
 
+        // Cada viejito avanza independientemente, compartiendo la velocidad.
         float deltaModificado = baileViejitosActivo ? (deltaTime * velAnimViejitos) : 0.0f;
         relojCuerpo1 += deltaModificado * ritmoViejitos; relojCuerpo2 += deltaModificado * ritmoViejitos;
         tiempoEstado1 += deltaModificado * ritmoViejitos; tiempoEstado2 += deltaModificado * ritmoViejitos;
@@ -1056,9 +1376,14 @@ int main() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glm::vec3 posFisicaGuardada = camera.Position; camera.Position += offsetVisualOjos;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / SCR_HEIGHT, 0.1f, 100.0f);
+        // El aspecto se obtiene del framebuffer real para evitar deformaciones en monitores pequenos.
+        int anchoFramebuffer = 0, altoFramebuffer = 0;
+        glfwGetFramebufferSize(window, &anchoFramebuffer, &altoFramebuffer);
+        float aspecto = altoFramebuffer > 0 ? (float)anchoFramebuffer / (float)altoFramebuffer : (float)SCR_WIDTH / SCR_HEIGHT;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspecto, 0.1f, 100.0f);
         glm::mat4 view = camera.GetViewMatrix();
 
+        // Aplicar matrices de camara e iluminacion para la escena opaca.
         miShader.use();
         glUniform3fv(ubicacionUniform(miShader.ID, "viewPos"), 1, glm::value_ptr(camera.Position));
         glUniformMatrix4fv(ubicacionUniform(miShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
@@ -1110,7 +1435,8 @@ int main() {
         glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.2f, 0.0f)), glm::vec3(0.2f))));
         modeloMapaCompleto.Draw(miShader);
 
-        // --- 1. PROCESIÓN DE CANOAS Y COPALERAS ---
+        // --- 1. Procesion de canoas y copaleras ---
+        // Conserva el vaiveno sutil de cada embarcacion y las luces del copal.
         for (int k = 0; k < NUM_CANOAS_PROC; k++) {
             glm::vec3 posK = posProc[k]; posK.y += std::sin(currentFrame * 1.2f + (k * 0.7f)) * 0.008f + alturaCanoasProcesion;
             glm::mat4 canoaMat = glm::scale(glm::rotate(glm::rotate(glm::rotate(glm::rotate(glm::translate(glm::mat4(1.0f), posK), glm::radians(yawProc[k]), glm::vec3(0, 1, 0)), glm::radians(90.0f), glm::vec3(0, 1, 0)), glm::radians(std::sin(currentFrame + k * 0.5f) * 1.2f), glm::vec3(0, 0, 1)), glm::radians(std::cos(currentFrame + k * 0.5f) * 0.6f), glm::vec3(1, 0, 0)), glm::vec3(escalaCanoaProcesion));
@@ -1126,7 +1452,8 @@ int main() {
             setLight(31 + (k * 2), glm::vec3(canoaMat * glm::vec4(offsetLuzPopa, 1.0f)), glm::vec3(0.9f, 0.6f, 0.2f), 1.2f, 1.8f);
         }
 
-        // --- 2. CANOA Y PESCADORES MARIPOSEROS (A1) ---
+        // --- 2. Canoa y pescadores mariposeros (A1) ---
+        // Los fotogramas clave se interpolan de forma ciclica.
         glm::mat4 canoaA1 = glm::rotate(glm::translate(glm::mat4(1.0f), posCanoaA1), glm::radians(yawCanoaA1), glm::vec3(0.0f, 1.0f, 0.0f));
         dibujar(modeloCanoa, glm::scale(canoaA1, glm::vec3(escalaCanoaA1)));
 
@@ -1140,7 +1467,9 @@ int main() {
         dibujarPurepecha(canoaA1, sepA1, 0.0f, false);
         dibujarPurepecha(canoaA1, -sepA1, 0.0f, true);
 
-        // --- 3. PESCADOR LANZANDO LA FISGA ---
+        // --- 3. Bote, pescador y lanzamiento de fisga ---
+        // La fisga se ancla a la mano hasta su liberacion; despues usa
+        // movimiento balistico y detiene la punta bajo el agua.
         UrandenFisga::Animation(deltaTime);
         pescadorFisga.animar(UrandenFisga::actual.hombroX, UrandenFisga::actual.hombroZ, UrandenFisga::actual.codoX, UrandenFisga::actual.munecaX, UrandenFisga::actual.pechoX, UrandenFisga::actual.rodillas);
 
@@ -1193,7 +1522,8 @@ int main() {
         glUniform3f(ubicacionUniform(miShader.ID, "objectColor"), 1.0f, 1.0f, 1.0f);
         modeloFisga.Draw(miShader);
 
-        // --- 4. VIEJITOS DANZANTES Y SUS BASTONES ---
+        // --- 4. Danza de los viejitos y bastones ---
+        // Los bastones siguen el punto de agarre animado de cada personaje.
         glUseProgram(0); glActiveTexture(GL_TEXTURE0);
 
         glm::mat4 modeloViejito1 = glm::translate(glm::mat4(1.0f), glm::vec3(2.5f, -0.05f, 15.6f) + offsetViejitos + glm::vec3(posX1, posY1, posZ1));
@@ -1232,7 +1562,7 @@ int main() {
         glUniformMatrix4fv(ubicacionUniform(miShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(modeloBaston2));
         bastonViejito.Draw(miShader);
 
-        // --- LUCES GEOMÉTRICAS Y PUENTES ---
+        // --- Luces geometricas y decoracion de los puentes ---
         glUniform1i(ubicacionUniform(miShader.ID, "useTexture"), false);
         glUniform1i(ubicacionUniform(miShader.ID, "isLightSource"), true);
         glUniform1f(ubicacionUniform(miShader.ID, "fogDensity"), 0.0f);
@@ -1262,6 +1592,7 @@ int main() {
         dibujarFocosPuente(postesPuente, 9); dibujarFocosPuente(postesPuente2, 12); glBindVertexArray(0);
 
         glUniform1i(ubicacionUniform(miShader.ID, "isLightSource"), false); glUniform1f(ubicacionUniform(miShader.ID, "fogDensity"), fogDensity);
+        // Dibujar el agua a ALTURA_AGUA_ESCENA con su shader independiente.
         waterShader.use();
         glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
@@ -1271,7 +1602,7 @@ int main() {
         glUniform3fv(ubicacionUniform(waterShader.ID, "fogColor"), 1, glm::value_ptr(fogColor));
         glUniform1f(ubicacionUniform(waterShader.ID, "fogDensity"), fogDensity);
         glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture); glUniform1i(ubicacionUniform(waterShader.ID, "skybox"), 1);
-        glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.88f, 0.0f))));
+        glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, ALTURA_AGUA_ESCENA, 0.0f))));
         glDisable(GL_CULL_FACE); glBindVertexArray(waterVAO); glDrawElements(GL_TRIANGLES, (GLsizei)waterIndices.size(), GL_UNSIGNED_INT, 0); glBindVertexArray(0);
 
         glDepthFunc(GL_LEQUAL); skyboxShader.use();
@@ -1279,6 +1610,7 @@ int main() {
         glUniformMatrix4fv(ubicacionUniform(skyboxShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glBindVertexArray(skyboxVAO); glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture); glDrawArrays(GL_TRIANGLES, 0, 36); glBindVertexArray(0); glDepthFunc(GL_LESS);
 
+        // Dibujar la cedula por encima del mundo 3D, sin prueba de profundidad.
         if (estacionActivaHUD != -1) {
             glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glDisable(GL_DEPTH_TEST);
             hudShader.use(); glUniform1i(ubicacionUniform(hudShader.ID, "hudTexture"), 0);
@@ -1291,9 +1623,17 @@ int main() {
         }
 
         camera.Position = posFisicaGuardada;
-        glfwSwapBuffers(window); glfwPollEvents(); showFPS(window);
+        // Mostrar Uranden solo despues de terminar de dibujar el primer fotograma.
+        // Asi no aparece un rectangulo blanco mientras se cargan modelos y texturas.
+        glfwSwapBuffers(window);
+        if (!glfwGetWindowAttrib(window, GLFW_VISIBLE)) {
+            glfwShowWindow(window);
+            glfwFocusWindow(window);
+        }
+        glfwPollEvents(); showFPS(window);
     }
 
+    // Liberar objetos propios de OpenGL y cerrar el motor de audio.
     glDeleteVertexArrays(1, &skyboxVAO); glDeleteBuffers(1, &skyboxVBO);
     glDeleteVertexArrays(1, &waterVAO); glDeleteBuffers(1, &waterVBO); glDeleteBuffers(1, &waterEBO);
     glDeleteVertexArrays(1, &hudVAO); glDeleteBuffers(1, &hudVBO);
