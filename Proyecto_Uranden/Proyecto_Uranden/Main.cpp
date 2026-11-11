@@ -72,7 +72,7 @@ bool baileViejitosActivo = true; // Control del baile con tecla J
 // =========================================================================
 
 // 1. Viejitos en la plaza
-float escalaViejitos = 0.32f;
+float escalaViejitos = 0.22f;
 glm::vec3 offsetViejitos(0.352146f, -0.199837f, 0.954319f);
 float velAnimViejitos = 0.233078f;
 float rotacionViejitos = -109.633f;
@@ -81,12 +81,12 @@ float factorEscalaBaston = 0.759367f; // Hereda el 0.4f de modeloViejito
 // 2. Pescador de la Fisga y su Bote
 glm::vec3 posBoteFisga(1.01965f, -0.772005f, -1.54735f);
 float yawBoteFisga = 3.45743f;
-float escalaFisgaGlobal = 0.35f;
+float escalaFisgaGlobal = 0.25f;
 bool modoEdicionFisga = false;
 
 // 3. Exhibición de Mariposeros (Canoa A1)
 float escalaCanoaA1 = 1.17f; // Proporcional al mariposero en 0.4f (cámbialo a 0.4f si prefieres)
-float escalaA1 = 0.35f;
+float escalaA1 = 0.42f;
 const float SEPARACION_PESCADOR = 0.225f;
 float pisoCanoaA1 = -0.07f;
 const float PIES_A_ORIGEN = 0.43f;
@@ -934,7 +934,7 @@ int main() {
     UrandenFisga::precargarAnimacion();
 
     construirRutasProcesion();
-    Model modeloMapaCompleto("Models/MapaCompleto/Uranden_MAPA.gltf");
+    Model modeloMapaCompleto("Models/MapaCompleto/Rendido.gltf");
     construirColisionadorTerreno(modeloMapaCompleto);
 
     Model mCuerpo("Models/mariposero/cuerpo.obj");
