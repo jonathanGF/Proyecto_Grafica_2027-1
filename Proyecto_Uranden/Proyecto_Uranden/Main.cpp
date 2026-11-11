@@ -82,7 +82,7 @@ float factorEscalaBaston = 0.759367f; // Hereda el 0.4f de modeloViejito
 glm::vec3 posBoteFisga(1.01965f, -0.772005f, -1.54735f);
 float yawBoteFisga = 3.45743f;
 float escalaFisgaGlobal = 0.25f;
-bool modoEdicionFisga = false;
+bool modoEdicionFisga = false; // Desactivado permanentemente: no existe tecla de edicion.
 
 // 3. Exhibición de Mariposeros (Canoa A1)
 float escalaCanoaA1 = 1.17f; // Proporcional al mariposero en 0.4f (cámbialo a 0.4f si prefieres)
@@ -784,8 +784,8 @@ float obtenerAlturaTerreno(float x, float z, float alturaActual = -0.20f) {
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) glfwSetWindowShouldClose(window, true);
 
-    // C alterna caminata y camara libre; no interfiere con la edicion de la fisga.
-    if (!modoEdicionFisga && teclaPulsada(window, GLFW_KEY_C)) {
+    // C alterna entre caminata POV y camara libre.
+    if (teclaPulsada(window, GLFW_KEY_C)) {
         modoDron = false;
         modoCaminataPOV = !modoCaminataPOV;
         std::cout << (modoCaminataPOV
@@ -793,50 +793,18 @@ void processInput(GLFWwindow* window) {
             : ">> CAMARA: LIBRE (sin efecto de pasos) | Q bajar, R subir\n");
     }
 
-    if (!modoEdicionFisga) {
-        // WASD conserva el modo seleccionado: ya no reactiva la caminata.
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) camera.ProcessKeyboard(FORWARD, deltaTime);
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camera.ProcessKeyboard(BACKWARD, deltaTime);
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) camera.ProcessKeyboard(LEFT, deltaTime);
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) camera.ProcessKeyboard(RIGHT, deltaTime);
+    // Movimiento habitual del visitante.
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) camera.ProcessKeyboard(FORWARD, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camera.ProcessKeyboard(BACKWARD, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) camera.ProcessKeyboard(LEFT, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) camera.ProcessKeyboard(RIGHT, deltaTime);
 
-        // Movimiento vertical solo en camara libre (y fuera del dron).
-        if (!modoCaminataPOV && !modoDron) {
-            const float velocidadVertical = 2.5f * deltaTime;
-            if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) camera.Position.y += velocidadVertical;
-            if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) camera.Position.y -= velocidadVertical;
-        }
+    // Movimiento vertical solamente en camara libre.
+    if (!modoCaminataPOV && !modoDron) {
+        const float velocidadVertical = 2.5f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) camera.Position.y += velocidadVertical;
+        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) camera.Position.y -= velocidadVertical;
     }
-    else {
-        float vel = 1.5f * deltaTime, velRot = 45.0f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) posBoteFisga.z -= vel;
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) posBoteFisga.z += vel;
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) posBoteFisga.x -= vel;
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) posBoteFisga.x += vel;
-        if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) posBoteFisga.y += vel;
-        if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) posBoteFisga.y -= vel;
-        if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) yawBoteFisga += velRot;
-        if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) yawBoteFisga -= velRot;
-        if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS) escalaFisgaGlobal += vel * 0.5f;
-        if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) escalaFisgaGlobal = std::max(0.05f, escalaFisgaGlobal - vel * 0.5f);
-    }
-
-    static bool enterPresionado = false;
-    if (glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS) {
-        if (!enterPresionado) {
-            enterPresionado = true; modoEdicionFisga = !modoEdicionFisga;
-            if (modoEdicionFisga) {
-                std::cout << "\n>> MODO EDICION FISGA: ACTIVADO [W/A/S/D] Mover | [UP/DOWN] Altura | [LEFT/RIGHT] Rotar | [U/I] Escalar\n";
-            }
-            else {
-                std::cout << "\n>> MODO EDICION FISGA: DESACTIVADO\n";
-                std::cout << "posBoteFisga = glm::vec3(" << posBoteFisga.x << "f, " << posBoteFisga.y << "f, " << posBoteFisga.z << "f);\n";
-                std::cout << "yawBoteFisga = " << yawBoteFisga << "f;\n";
-                std::cout << "escalaFisgaGlobal = " << escalaFisgaGlobal << "f;\n\n";
-            }
-        }
-    }
-    else enterPresionado = false;
 
     if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
         if (!eKeyPressed) {
@@ -858,8 +826,6 @@ void processInput(GLFWwindow* window) {
     if (teclaPulsada(window, GLFW_KEY_K)) UrandenFisga::IniciarLanzamiento();
     if (teclaPulsada(window, GLFW_KEY_J)) baileViejitosActivo = !baileViejitosActivo;
 
-    if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) factorEscalaBaston = std::max(0.1f, factorEscalaBaston - 0.5f * deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) factorEscalaBaston += 0.5f * deltaTime;
 }
 
 void showFPS(GLFWwindow* window) {
