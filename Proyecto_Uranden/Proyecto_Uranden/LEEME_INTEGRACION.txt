@@ -1,0 +1,128 @@
+URANDEN: MAPA OPTIMIZADO + ANIMACIONES DEL EQUIPO
+ACTUALIZACION: COLISION CON EL SUELO
+
+SI YA INSTALASTE LA VERSION ANTERIOR Y TE FUNCIONA
+Reemplaza Main.cpp, StreamingMap.h y TerrainSurface.h.
+Agrega GroundWalker.h en esa misma carpeta.
+Recompila Release | x64. La cache del suelo se regenera automaticamente;
+la primera apertura puede tardar. No necesitas tocar Models ni Blender.
+Consulta CAMBIOS_SUELO.txt para conocer el comportamiento nuevo.
+
+BASES UTILIZADAS
+Tu Main funcional: Texto pegado(20261110-051955).txt.
+Main de tu companero: Main(2).cpp.
+El mapa sigue siendo Models/MapaCompleto/Rendido.gltf, escala 0.2 y desplazamiento (0,-0.2,0).
+
+INSTALACION EN TU PROYECTO ACTUAL QUE YA FUNCIONA
+1. Guarda una copia de tu proyecto actual.
+2. Copia los ocho archivos de codigo de este ZIP, respetando las carpetas:
+   Main.cpp
+   StreamingMap.h
+   TerrainSurface.h
+   GroundWalker.h (nuevo, junto al Main)
+   Model.h
+   Mesh.h
+   shader/shader.vert
+   shader/shader.frag
+   Reemplaza los que ya existen. Los tres headers de colision/streaming se incluyen
+   automaticamente; no son archivos .cpp que debas compilar por separado.
+3. Del proyecto de tu companero copia ViejitoRig.h junto al Main.cpp.
+   Ese archivo NO venia adjunto y NO esta incluido en este ZIP. Es obligatorio.
+   Si ese header incluye otros archivos propios, copia tambien esas dependencias.
+4. Copia los modelos de animaciones de tu companero con sus carpetas, .mtl,
+   texturas y .bin asociados. La lista de rutas principales esta en
+   ASSETS_REQUERIDOS.txt. Incluye canoa, canoaPro, copalera, Baston,
+   los dos patos, ViejitoRig.bin, Textura_Viejito.png y mariposero/ completo.
+   Conserva TU Models/MapaCompleto con Rendido.gltf, Rendido.bin y sus texturas.
+   Los modelos binarios y texturas no vienen en este ZIP: solo recibi los fuentes.
+5. Conserva tu WaterRenderer.h y shader/water.vert + water.frag que ya funcionan.
+   Conserva Camera.h, Shader.h, AudioEngine.h, miniaudio.h, tus DLL y bibliotecas.
+   Para los recursos del companero que te falten, copia Models/textures/,
+   audio/, skybox/, shader/hud.vs + hud.fs y shader/skybox.vert + skybox.frag.
+   No reemplaces los dos shaders principales de este ZIP por los de su proyecto.
+6. Si tiene animaciones/A1_mariposeros.txt, copia esa carpeta. Si falta,
+   se usan los 14 keyframes de mariposeros que ya vienen en el Main.
+7. Compila Release | x64, estandar C++17 (/std:c++17).
+   Ejecuta con directorio de trabajo $(ProjectDir), donde estan Main y Models.
+   Manten tus configuraciones de enlazado actuales; no reemplaces tu .vcxproj.
+   Solo este Main.cpp debe definir main(). No agregues como otras entradas los
+   programas independientes BaileViejitos.cpp o URANDEN_Fisga_Articulada.cpp.
+
+AGUA Y MAPA
+- ALTURA_AGUA = -0.99f, en Main.cpp. Es el nivel base; las ondas siguen animadas.
+- El nodo EXACTO 'agua' (malla Plane.001 del Rendido.gltf recibido) se omite al
+  construir la cache. Desaparece el agua estatica de referencia, sin editar Blender.
+- La geometria del granjero repetido sigue excluida por su textura exacta:
+  Meshy_AI_Straw_Hat_Villager_1019172923_texture.png.
+  En el glTF recibido corresponde a cinco nodos/instancias, 93,180 triangulos.
+  No se usan texturas transparentes ni nombres generales como Mesh0 para borrarlo.
+- Los personajes animados se cargan aparte y no estan afectados por ese filtro.
+- Se conservan streaming, descarte por camara/distancia, agrupacion de materiales,
+  limite de texturas y niebla del Main optimizado. La caminata ahora se limita
+  por el apoyo real sobre el terreno. El contorno antiguo queda desactivado
+  para caminar porque puede cortar zonas transitables del mapa nuevo.
+- La nueva version construira una cache nueva automaticamente. La primera
+  preparacion lee el .gltf/.bin completo mediante Assimp y necesita RAM y disco.
+  Las ejecuciones posteriores leen las paginas cercanas de la cache.
+  Ocultar objetos por camara y descargar paginas lejanas son operaciones distintas:
+  al girar no se descarga inmediatamente lo cercano, para evitar tirones.
+
+IMPLEMENTACIONES INCORPORADAS DEL MAIN DEL COMPANERO
+- Dos mariposeros articulados, red de mariposa, edicion y carga/guardado de poses.
+- Procesion de cinco canoas con copaleras y sus luces de sahumadores, proa y popa.
+- Dos viejitos con coreografia y bastones; requieren el ViejitoRig.h original.
+- Pato: nado, preparacion y trayectoria de despegue usando sus dos modelos GLB.
+  Es la animacion implementada en el Main, no una nueva animacion de alas con huesos.
+- Camara con seguimiento del suelo, balanceo al caminar, dron y vistas rapidas.
+- Luz lunar, reflectores de letras/letrero, ambos puentes y focos fisicos/cables.
+- Estaciones, cedulas HUD y audio del proyecto.
+- Se conserva ademas la canoa del recorrido de tu Main.
+
+CORRECCIONES Y OPTIMIZACION DE LA INTEGRACION
+- El pato ahora se dibuja despues de limpiar la pantalla y configurar la camara.
+- Las luces de canoas se actualizan antes de dibujar el mapa en ese mismo frame.
+- Hasta 50 ranuras de luz; se omiten calculos caros de luces apagadas o lejanas.
+- Camara: intersecciones con los triangulos del suelo, organizados en un BVH
+  para consultar solo los candidatos cercanos. No hay banda fija de alturas.
+  Los pisos superpuestos se eligen segun la altura de apoyo del jugador;
+  el terreno base nunca permite colocar los pies por debajo de su superficie.
+  La colision permanece disponible aunque una zona se descargue del render.
+  Los triangulos de apoyo ocupan RAM adicional; no necesitan texturas ni GPU.
+  Este cambio resuelve el apoyo vertical, no la colision de todas las paredes.
+- Actores Model: descarte por encuadre y distancia. Sus modelos se cargan al inicio;
+  no se aplica streaming del mapa a sus esqueletos ni a los objetos animados.
+- Viejitos: se evita actualizar su rig y dibujarlo cuando estan lejos; el tiempo
+  de la coreografia sigue avanzando. El rig original controla su propio shader.
+- Texturas GLB embebidas soportadas; texturas de actores limitadas a 2048 px en GPU.
+- Agua ligera por defecto, 8 luces reflejadas cercanas; F6 permite subir calidad.
+- Cache de ubicaciones de uniforms y deltaTime limitado para evitar saltos grandes.
+- Los botes y el pato se desplazan verticalmente con el cambio del nivel del agua,
+  conservando sus offsets de colocacion originales.
+
+CONTROLES
+WASD + mouse: caminar/mirar. Al moverte sales del dron o de una vista fija.
+5: activar/desactivar dron; al desactivarlo regresas a la posicion anterior.
+7: panoramica. 8: inicio del recorrido. 9: viejitos. 0: mariposeros.
+6 o Espacio: iniciar/reiniciar procesion.
+R: reiniciar pato. Los viejitos comienzan automaticamente.
+1: reproducir/pausar mariposeros.
+C: seleccionar articulacion. V/B: ajustar (en pausa). Q: pose base.
+2: agregar pose. 3: limpiar poses en memoria. 4: guardar. L: cargar.
+N/M: disminuir/aumentar escala del baston.
+E: abrir/cerrar cedula de una estacion cercana. Esc: salir.
+F6: calidad del agua (ligera/equilibrada/alta). F7: mostrar/ocultar agua.
+F8: entrar/salir de calibracion de luces. En este modo 7/8/9/0 seleccionan
+postes del primer puente, I/O/K/L reflectores opuestos; flechas desplazan X/Z,
+U/J suben/bajan y P imprime coordenadas. Desactivalo para usar las vistas y L.
+
+ALCANCE DE LOS ARCHIVOS RECIBIDOS
+La captura muestra PescadorFisgaRigGPU_NaturalV3.h y URANDEN_Fisga_Articulada.cpp,
+pero esos archivos no fueron adjuntados y Main(2).cpp no los incluye ni ejecuta.
+Por eso la animacion de fisga NO esta integrada: requiere sus fuentes y assets.
+No se inventaron reemplazos para ViejitoRig.h ni para la animacion de fisga.
+Las luces, trayectorias y posiciones se conservaron del Main del companero;
+conviene revisar su colocacion visual sobre tu mapa mejorado al ejecutar.
+
+VERIFICACION
+Consulta VALIDACION.txt. Se probaron componentes reales de OpenGL y Assimp con
+escenas pequenas; no se midieron FPS ni se ejecuto el mapa completo en Windows.

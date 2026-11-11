@@ -12,11 +12,15 @@ out vec4 VertexColor;
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+uniform bool streamMap;
 
 void main()
 {
     FragPos = vec3(model * vec4(aPos, 1.0));
-    Normal = mat3(transpose(inverse(model))) * aNormal;  
+    // El mapa ya tiene normales transformadas en cache y usa escala uniforme.
+    // Evita invertir una matriz para cada vertice del mapa.
+    if (streamMap) Normal = mat3(model) * aNormal;
+    else Normal = mat3(transpose(inverse(model))) * aNormal;  
     // Las UV ya vienen preparadas para cada material desde Blender/glTF.
     // El multiplicador 30.0 del terreno OBJ anterior deformaba todo el mapa.
     TexCoords = aTexCoords;

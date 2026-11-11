@@ -18,8 +18,12 @@
     #include <iostream>
     #include <vector>
     #include <cstring>
+    #include <algorithm>
+    #include <memory>
+    #include <cstdint>
 
-    unsigned int TextureFromFile(const char* path, const std::string& directory);
+    inline unsigned int TextureFromFile(const char* path, const std::string& directory);
+    inline unsigned int TextureFromEmbedded(const aiTexture* texture);
 
     class Model {
     public:
@@ -131,11 +135,11 @@
 
             // 3. Procesar materiales y texturas asociadas
             glm::vec4 baseColorFactor(1.0f);
-            if (mesh->mMaterialIndex >= 0) {
+            if (mesh->mMaterialIndex < scene->mNumMaterials) {
                 aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
 
                 aiColor4D materialColor(1.0f, 1.0f, 1.0f, 1.0f);
-                if (aiGetMaterialColor(material, AI_MATKEY_COLOR_DIFFUSE, &materialColor) != AI_SUCCESS) {
+                if (aiGetMaterialColor(material, "$clr.base", 0, 0, &materialColor) != AI_SUCCESS) {
                     aiGetMaterialColor(material, AI_MATKEY_COLOR_DIFFUSE, &materialColor);
                 }
 
@@ -153,28 +157,28 @@
                 // las texturas DIFFUSE que ya utilizaba el proyecto.
                 std::vector<Texture> diffuseMaps = loadMaterialTextures(
                     material,
-                    aiTextureType_DIFFUSE,
-                    "texture_diffuse"
+                    static_cast<aiTextureType>(12),
+                    "texture_diffuse", scene
                 );
 
                 if (diffuseMaps.empty()) {
                     diffuseMaps = loadMaterialTextures(
                         material,
                         aiTextureType_DIFFUSE,
-                        "texture_diffuse"
+                        "texture_diffuse", scene
                     );
                 }
                 textures.insert(textures.end(), diffuseMaps.begin(), diffuseMaps.end());
 
                 // Mapas especulares
-                std::vector<Texture> specularMaps = loadMaterialTextures(material, aiTextureType_SPECULAR, "texture_specular");
+                std::vector<Texture> specularMaps = loadMaterialTextures(material, aiTextureType_SPECULAR, "texture_specular", scene);
                 textures.insert(textures.end(), specularMaps.begin(), specularMaps.end());
             }
 
             return Mesh(vertices, indices, textures, baseColorFactor);
         }
 
-        std::vector<Texture> loadMaterialTextures(aiMaterial* mat, aiTextureType type, std::string typeName) {
+        std::vector<Texture> loadMaterialTextures(aiMaterial* mat, aiTextureType type, std::string typeName, const aiScene* scene) {
             std::vector<Texture> textures;
             for (unsigned int i = 0; i < mat->GetTextureCount(type); i++) {
                 aiString str;
@@ -197,7 +201,8 @@
 
                 if (!skip) {
                     Texture texture;
-                    texture.id = TextureFromFile(str.C_Str(), this->directory);
+                    const aiTexture* embedded=scene->GetEmbeddedTexture(str.C_Str());
+                    texture.id=embedded?TextureFromEmbedded(embedded):TextureFromFile(str.C_Str(),this->directory);
                     texture.type = typeName;
                     texture.path = str.C_Str();
                     textures.push_back(texture);
@@ -235,26 +240,45 @@
         return decoded;
     }
 
-    inline unsigned int TextureFromFile(const char* path, const std::string& directory) {
-        std::string filename = DecodeTextureURI(std::string(path));
-        filename = directory + '/' + filename;
-
-        GLuint textureID = SOIL_load_OGL_texture(
-            filename.c_str(),
-            SOIL_LOAD_AUTO,
-            SOIL_CREATE_NEW_ID,
-            SOIL_FLAG_MIPMAPS | SOIL_FLAG_INVERT_Y
-        );
-
-        if (textureID == 0) {
-            std::cout << "ERROR::SOIL2::Fallo al cargar textura en ruta: " << filename << std::endl;
+    // Texturas de los actores: soporta imagenes externas y embebidas en GLB.
+    // Limita las copias en GPU a 2048 px; no modifica sus archivos originales.
+    inline GLuint UploadModelPixels(const unsigned char* raw,int w,int h) {
+        if(!raw||w<=0||h<=0)return 0;
+        const double factor=(std::min)(1.0,2048.0/(std::max)(w,h));
+        const int nw=(std::max)(1,int(w*factor)),nh=(std::max)(1,int(h*factor));
+        std::vector<unsigned char> out(std::size_t(nw)*nh*4);
+        for(int y=0;y<nh;++y)for(int x=0;x<nw;++x) {
+            int y0=int(std::int64_t(y)*h/nh),y1=int(std::int64_t(y+1)*h/nh);
+            int x0=int(std::int64_t(x)*w/nw),x1=int(std::int64_t(x+1)*w/nw);
+            std::uint64_t sum[4]={0,0,0,0};
+            for(int yy=y0;yy<y1;++yy)for(int xx=x0;xx<x1;++xx)
+                for(int c=0;c<4;++c)sum[c]+=raw[(std::size_t(yy)*w+xx)*4+c];
+            for(int c=0;c<4;++c)out[(std::size_t(nh-1-y)*nw+x)*4+c]=static_cast<unsigned char>(sum[c]/((y1-y0)*(x1-x0)));
         }
-
-        glBindTexture(GL_TEXTURE_2D, textureID);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        return textureID;
+        GLuint id=0;glGenTextures(1,&id);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,id);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,nw,nh,0,GL_RGBA,GL_UNSIGNED_BYTE,out.data());
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+        return id;
+    }
+    inline unsigned int TextureFromFile(const char* path,const std::string& directory) {
+        std::string filename=directory+"/"+DecodeTextureURI(path);
+        int w=0,h=0,c=0;unsigned char* data=SOIL_load_image(filename.c_str(),&w,&h,&c,SOIL_LOAD_RGBA);
+        if(!data){std::cerr<<"TEXTURA NO ENCONTRADA: "<<filename<<'\n';return 0;}
+        GLuint id=UploadModelPixels(data,w,h);SOIL_free_image_data(data);return id;
+    }
+    inline unsigned int TextureFromEmbedded(const aiTexture* texture) {
+        if(texture->mHeight==0) {
+            int w=0,h=0,c=0;
+            unsigned char* data=SOIL_load_image_from_memory(reinterpret_cast<const unsigned char*>(texture->pcData),
+                int(texture->mWidth),&w,&h,&c,SOIL_LOAD_RGBA);
+            if(!data){std::cerr<<"No se pudo decodificar la imagen embebida del GLB\n";return 0;}
+            GLuint id=UploadModelPixels(data,w,h);SOIL_free_image_data(data);return id;
+        }
+        std::vector<unsigned char> rgba(std::size_t(texture->mWidth)*texture->mHeight*4);
+        for(std::size_t i=0;i<rgba.size()/4;++i){auto p=texture->pcData[i];rgba[i*4]=p.r;rgba[i*4+1]=p.g;rgba[i*4+2]=p.b;rgba[i*4+3]=p.a;}
+        return UploadModelPixels(rgba.data(),int(texture->mWidth),int(texture->mHeight));
     }

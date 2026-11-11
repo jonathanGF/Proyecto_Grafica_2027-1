@@ -1,0 +1,53 @@
+CORRECCION DEL SUELO Y ACCESO AL TIANGUIS
+
+ACTUALIZAR LA VERSION QUE YA FUNCIONA
+1. Reemplaza Main.cpp, StreamingMap.h y TerrainSurface.h por los de este ZIP.
+2. Agrega GroundWalker.h junto a ellos.
+3. Recompila Release | x64. Conserva los modelos, shaders y demas archivos
+   que ya tienes instalados; no necesitas volver a copiar los assets.
+4. La primera apertura prepara una cache nueva automaticamente. Espera a que
+   termine. No necesitas borrar a mano la cache anterior para aplicar el cambio.
+
+CAUSAS CORREGIDAS
+La version anterior descartaba el suelo fuera de [-0.85, 0.90] y almacenaba
+una sola altura por celda; por eso perdia pendientes altas/bajas y confundia
+niveles superpuestos. Ademas, mantenia el contorno horizontal de un recorrido
+anterior, que podia bloquear regiones transitables del mapa mejorado.
+
+NUEVO COMPORTAMIENTO
+- La altura se obtiene de los triangulos reales ya transformados al mundo.
+- Un indice espacial BVH evita recorrer todo el mapa por cada movimiento.
+- Los pies no bajan de la superficie del terreno base Terreno/Terreno.001.
+- Las rampas y escalones se recorren siguiendo su superficie.
+- Las superficies muy por encima de los pies, como techos y lonas, no sustituyen
+  al piso cuando estas caminando debajo de ellas.
+- El recorrido se verifica en pequenos pasos; un frame largo no permite cruzar
+  un hueco grande de una sola vez. Si no hay apoyo cercano, te detienes.
+- La caminata no queda restringida al contorno antiguo. El limite sigue la
+  geometria de apoyo existente, incluyendo zonas del mapa fuera de ese contorno.
+- La colision no desaparece al descargar del render una zona lejana.
+- El balanceo visual no hunde ni desplaza lateralmente la camara fuera del apoyo.
+- Se reduce el plano cercano de la camara para evitar recortar el suelo cercano.
+- Se excluye del apoyo la vegetacion reconocible por los nombres del glTF;
+  sigue siendo visible. El agua de referencia y el granjero siguen excluidos.
+- El agua animada sigue en -0.99f y se mantienen las animaciones y luces.
+
+AJUSTES EN GroundWalker.h (UNIDADES DE OPENGL)
+eyeHeight = 0.28: altura de los ojos sobre los pies.
+maxStepUp = 0.12: escalon maximo que se puede subir en cada paso de comprobacion.
+maxStepDown = 0.30: desnivel maximo que se permite bajar de golpe.
+footRadius = 0.045: apoyo alrededor de los pies para juntas entre tablas.
+sweepStep = 0.02: separacion maxima entre comprobaciones del recorrido.
+
+La camara se detiene ante desniveles mayores a esos limites; no se ha agregado
+salto ni caida libre. Las vistas fijas y el dron conservan su funcionamiento.
+La tecla 8 regresa al inicio del recorrido. El contorno antiguo puede reactivarse
+con USAR_BARRERA_ANTIGUA=true, pero volveria a limitar el acceso a esas zonas.
+
+ALCANCE
+Es colision de apoyo con el suelo, no un sistema completo de colisiones contra
+paredes, coches o todos los objetos del escenario. Los triangulos de apoyo se
+conservan en RAM (40 bytes por triangulo, mas el BVH); no cargan todas las texturas
+ni toda la geometria de render en GPU. La cache inicial sigue necesitando Assimp.
+La escena completa y el tianguis deben comprobarse en tu equipo: aqui no se
+recibio Rendido.bin. Las pruebas automaticas estan descritas en VALIDACION.txt.
