@@ -1,3 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 *.bin filter=lfs diff=lfs merge=lfs -text
+Proyecto_Uranden/Proyecto_Uranden/Models/MapaCompleto/bake[[:space:]]8k.png filter=lfs diff=lfs merge=lfs -text
