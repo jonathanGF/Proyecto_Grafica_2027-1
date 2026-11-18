@@ -143,6 +143,8 @@
   <ItemGroup>
     <None Include="shader\hud.fs" />
     <None Include="shader\hud.vs" />
+    <None Include="shader\pato_directo.frag" />
+    <None Include="shader\pato_directo.vs" />
     <None Include="shader\shader.frag" />
     <None Include="shader\shader.vert" />
     <None Include="shader\skybox.frag" />
@@ -154,6 +156,7 @@
     <ClInclude Include="AudioEngine.h" />
     <ClInclude Include="Camera.h" />
     <ClInclude Include="Model.h" />
+    <ClInclude Include="PatoAnimacion.h" />
     <ClInclude Include="PescadorFisgaRigGPU_NaturalV3.h" />
     <ClInclude Include="Shader.h" />
     <ClInclude Include="ViejitoRig.h" />
