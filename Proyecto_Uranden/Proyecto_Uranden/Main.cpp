@@ -29,6 +29,7 @@
 #include "Camera.h"
 #include "ViejitoRig.h" 
 #include "PescadorFisgaRigGPU_NaturalV3.h"
+#include "PatoAnimacion.h"
 
 // ============================================================================
 // EL CAMINO DE LAS ANIMAS | RECORRIDO CULTURAL INTERACTIVO (C++ / OpenGL 3.3)
@@ -61,7 +62,7 @@ GLint ubicacionUniform(GLuint programa, const std::string& nombre) {
 }
 
 // =========================================================================
-// 1. CONSTANTES Y CONFIGURACIÓN GLOBAL
+// 1. CONSTANTES Y CONFIGURACI├ôN GLOBAL
 // =========================================================================
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
@@ -268,14 +269,14 @@ float yawBoteFisga = 3.45743f;
 float escalaFisgaGlobal = 0.25f;
 bool modoEdicionFisga = false; // Desactivado permanentemente: no existe tecla de edicion.
 
-// 3. Exhibición de Mariposeros (Canoa A1)
-float escalaCanoaA1 = 1.17f; // Proporcional al mariposero en 0.4f (cámbialo a 0.4f si prefieres)
+// 3. Exhibici├│n de Mariposeros (Canoa A1)
+float escalaCanoaA1 = 1.17f; // Proporcional al mariposero en 0.4f (c├ímbialo a 0.4f si prefieres)
 float escalaA1 = 0.42f;
 const float SEPARACION_PESCADOR = 0.225f;
 float pisoCanoaA1 = -0.07f;
 const float PIES_A_ORIGEN = 0.43f;
 
-// 4. Procesión de Canoas y Copaleras
+// 4. Procesi├│n de Canoas y Copaleras
 float escalaCanoaProcesion = 0.35f;
 float alturaCanoasProcesion = -0.210887f + DIFERENCIA_ALTURA_AGUA + AJUSTE_EXTRA_PROCESION;
 float escalaCopalera = 0.85f; // Hereda el 0.4f de canoaMat
@@ -510,6 +511,15 @@ const std::vector<glm::vec3> postesPlaza = {
     glm::vec3(2.09366f, -0.116454f, 16.0913f),
     glm::vec3(2.08908f, -0.113338f, 16.7173f)
 };
+
+// Posiciones finales confirmadas: tres focos calidos y un reflector para el mercadito.
+const std::vector<glm::vec3> posicionesFarolesCalidos = {
+    glm::vec3(-9.27557f, 1.54104f, -0.715024f),
+    glm::vec3(-13.1928f, 2.23895f, 5.02747f),
+    glm::vec3(-9.61084f, 2.23501f, 4.28477f)
+};
+const glm::vec3 posicionReflectorMercadito(-11.5f, 9.5f, 8.69997f);
+const glm::vec3 direccionReflectorMercadito(0.0f, -1.0f, 0.0f);
 
 std::vector<glm::vec3> lucesOrilla = {
     glm::vec3(6.4632f,  -0.660309f, -0.730785f),
@@ -990,7 +1000,7 @@ float obtenerAlturaTerreno(float x, float z, float alturaActual = -0.20f) {
     return std::max(alturaActual, -0.45f);
 }
 
-// Guía de consulta rápida. Se muestra una sola vez al completar la carga.
+// Gu├¡a de consulta r├ípida. Se muestra una sola vez al completar la carga.
 // Los mensajes posteriores se reservan para acciones, proximidad y errores.
 void mostrarGuiaConsola() {
     std::cout
@@ -1012,6 +1022,7 @@ void mostrarGuiaConsola() {
         << "  ESC         Salir\n"
         << "----------------------------------------\n"
         << "Acercate a una estacion y presiona E.\n\n";
+    std::cout << "F1       - Mostrar nuevamente el menu de controles\n";
 }
 
 // Controles del visitante (sin edicion de transformaciones):
@@ -1020,6 +1031,12 @@ void mostrarGuiaConsola() {
 // K: lanzamiento de fisga; J: pausa de baile; ESC: cerrar.
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) glfwSetWindowShouldClose(window, true);
+
+
+    // F1: Mostrar nuevamente la guía de controles en consola.
+    if (teclaPulsada(window, GLFW_KEY_F1)) {
+        mostrarGuiaConsola();
+    }
 
     // C alterna entre caminata POV y camara libre.
     if (teclaPulsada(window, GLFW_KEY_C)) {
@@ -1117,7 +1134,7 @@ int main() {
     }
 
 #ifdef _WIN32
-    // Establecer un titulo unico ayuda a identificar la pestaña de ESTA consola.
+    // Establecer un titulo unico ayuda a identificar la pesta├▒a de ESTA consola.
     // Con Windows Terminal, GetConsoleWindow() devuelve un HWND interno invisible.
     const std::wstring tituloConsola = L"Uranden - Consola [" +
         std::to_wstring(GetCurrentProcessId()) + L"]";
@@ -1156,6 +1173,43 @@ int main() {
         return -1;
     }
     glEnable(GL_DEPTH_TEST);
+
+    // ---------------------------------------------------------------------
+    // ANIMACION AUTOMATICA DEL PATO (modulo header-only, una sola ventana)
+    // ---------------------------------------------------------------------
+    PatoSecuencia::PatoAnimado patoNado;
+    PatoSecuencia::PatoAnimado patoPreparado;
+    PatoSecuencia::PatoAnimado patoVuelo;
+
+    const GLuint shaderPato = PatoSecuencia::CrearProgramaGL(
+        PatoSecuencia::RutaRecurso("shader/pato_directo.vs"),
+        PatoSecuencia::RutaRecurso("shader/pato_directo.frag"));
+
+    const std::string rutaNado =
+        PatoSecuencia::RutaRecurso("Models/PatoNadando.patoanim");
+    const std::string rutaPreparado =
+        PatoSecuencia::RutaRecurso("Models/PatoPreparadoVuelo.patoanim");
+    const std::string rutaVuelo =
+        PatoSecuencia::RutaRecurso("Models/PatoVueloContinuo.patoanim");
+    const std::string rutaTexturaPato =
+        PatoSecuencia::RutaRecurso("Models/Pato_Color.png");
+
+    const bool nadoCargado = patoNado.cargar(rutaNado);
+    const bool preparadoCargado = patoPreparado.cargar(rutaPreparado);
+    const bool vueloCargado = patoVuelo.cargar(rutaVuelo);
+    const bool texturaExiste = PatoSecuencia::ExisteArchivo(rutaTexturaPato);
+    const GLuint texturaPato = texturaExiste
+        ? PatoSecuencia::CargarTextura(rutaTexturaPato) : 0;
+
+    const bool patoDisponible =
+        shaderPato != 0 && texturaPato != 0 &&
+        nadoCargado && preparadoCargado && vueloCargado;
+
+    if (patoDisponible) {
+    }
+    else {
+        std::cerr << "[PATO] La escena continuara sin el pato; revisa los recursos anteriores.\n";
+    }
 
     // Cargar programas de sombreado y crear geometria de apoyo.
     Shader miShader("shader/shader.vert", "shader/shader.frag");
@@ -1294,6 +1348,17 @@ int main() {
 
     mostrarGuiaConsola();
 
+    // Tres patos comparten los mismos clips cargados en GPU, pero cada uno
+    // tiene un desfase temporal y una posicion lateral independientes.
+    // Asi evitamos duplicar buffers, shaders o texturas innecesariamente.
+    const double inicioAnimacionPato = glfwGetTime();
+    const glm::vec3 desplazamientosPatos[3] = {
+        glm::vec3(0.0f, 0.0f, -0.85f),
+        glm::vec3(0.0f, 0.0f,  0.00f),
+        glm::vec3(0.0f, 0.0f,  0.85f)
+    };
+    const double desfasesPatos[3] = { 0.0, 1.2, 2.4 };
+
     // Bucle principal: entrada -> animacion -> escena -> agua -> HUD -> pantalla.
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
@@ -1412,6 +1477,23 @@ int main() {
         for (int i = 0; i < 2; i++) setLight(16 + i, lucesLetrero[i], glm::vec3(1.10f, 0.70f, 0.25f), 0.22f, 0.20f);
         for (int i = 0; i < 2; i++) setLight(18 + i, (glm::mix(postesPuente[0], postesPuente[1], i ? 0.65f : 0.35f) + glm::mix(postesPuente[2], postesPuente[3], i ? 0.65f : 0.35f)) * 0.5f + glm::vec3(0, 0.08f, 0), glm::vec3(0.70f, 0.32f, 0.05f), 0.70f, 1.80f);
         for (int i = 0; i < 4; i++) setLight(20 + i, lucesManantialOpuesto[i], glm::vec3(1.25f, 0.78f, 0.28f), 0.32f, 0.38f);
+
+        // Tres focos puntuales calidos sobre los faroles negros.
+        for (int i = 0; i < (int)posicionesFarolesCalidos.size(); ++i)
+            setLight(24 + i, posicionesFarolesCalidos[i], glm::vec3(1.35f, 0.78f, 0.42f), 0.28f, 0.22f);
+
+        // Reflector independiente del mercadito (el shader recibira estos uniforms).
+        glUniform3fv(ubicacionUniform(miShader.ID, "marketSpotLight.position"), 1, glm::value_ptr(posicionReflectorMercadito));
+        glUniform3fv(ubicacionUniform(miShader.ID, "marketSpotLight.direction"), 1, glm::value_ptr(direccionReflectorMercadito));
+        glUniform3f(ubicacionUniform(miShader.ID, "marketSpotLight.ambient"), 0.025f, 0.020f, 0.014f);
+        glUniform3f(ubicacionUniform(miShader.ID, "marketSpotLight.diffuse"), 1.10f, 0.88f, 0.66f);
+        glUniform3f(ubicacionUniform(miShader.ID, "marketSpotLight.specular"), 0.80f, 0.68f, 0.52f);
+        glUniform1f(ubicacionUniform(miShader.ID, "marketSpotLight.cutOff"), glm::cos(glm::radians(22.0f)));
+        glUniform1f(ubicacionUniform(miShader.ID, "marketSpotLight.outerCutOff"), glm::cos(glm::radians(34.0f)));
+        glUniform1f(ubicacionUniform(miShader.ID, "marketSpotLight.constant"), 1.0f);
+        glUniform1f(ubicacionUniform(miShader.ID, "marketSpotLight.linear"), 0.09f);
+        glUniform1f(ubicacionUniform(miShader.ID, "marketSpotLight.quadratic"), 0.032f);
+
         for (int i = 0; i < 4; i++) setLight(40 + i, focosUranden[i].pos, glm::vec3(1.20f, 0.65f, 0.20f), 0.22f, 0.20f);
         for (int i = 0; i < focosLetras.size(); i++) setLight(44 + i, focosLetras[i].pos, glm::vec3(1.20f, 0.65f, 0.20f), 0.22f, 0.20f);
         for (int i = 0; i < 2; i++) setLight(48 + i, (glm::mix(postesPuente2[0], postesPuente2[1], i ? 0.65f : 0.35f) + glm::mix(postesPuente2[2], postesPuente2[3], i ? 0.65f : 0.35f)) * 0.5f + glm::vec3(0, 0.08f, 0), glm::vec3(0.70f, 0.32f, 0.05f), 0.70f, 1.80f);
@@ -1514,7 +1596,7 @@ int main() {
             fisgaM = glm::rotate(fisgaM, glm::radians(UrandenFisga::actual.fisgaAngulo), glm::vec3(1, 0, 0));
         }
 
-        // Proporción de la fisga ajustada al pescador en 1.0f * escalaFisgaGlobal (0.70f = 0.42f / 0.60f)
+        // Proporci├│n de la fisga ajustada al pescador en 1.0f * escalaFisgaGlobal (0.70f = 0.42f / 0.60f)
         fisgaM = glm::scale(fisgaM, glm::vec3(0.70f * escalaFisgaGlobal));
         fisgaM = glm::translate(fisgaM, glm::vec3(0.0f, 0.55f, 0.0f));
 
@@ -1605,6 +1687,43 @@ int main() {
         glUniformMatrix4fv(ubicacionUniform(waterShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, ALTURA_AGUA_ESCENA, 0.0f))));
         glDisable(GL_CULL_FACE); glBindVertexArray(waterVAO); glDrawElements(GL_TRIANGLES, (GLsizei)waterIndices.size(), GL_UNSIGNED_INT, 0); glBindVertexArray(0);
 
+        // --- Tres patos animados: comparten camara, proyeccion y recursos GPU. ---
+        // Se dibujan despues del agua para que la superficie no los oculte.
+        // Cada pato recorre la misma secuencia con un desfase temporal distinto.
+        if (patoDisponible) {
+            const double tiempoGlobalPato = glfwGetTime() - inicioAnimacionPato;
+
+            for (int i = 0; i < 3; ++i) {
+                const double tiempoPato = tiempoGlobalPato + desfasesPatos[i];
+                const PatoSecuencia::PosePato posePato =
+                    PatoSecuencia::ActualizarCicloAutomatico(
+                        tiempoPato, patoNado, patoPreparado, patoVuelo);
+
+                glm::vec3 posicionPato = posePato.posicion + desplazamientosPatos[i];
+                posicionPato.y += ALTURA_AGUA_ESCENA;
+
+                glm::mat4 modeloPato = glm::translate(
+                    glm::mat4(1.0f), posicionPato);
+
+                if (posePato.estado == PatoSecuencia::VUELO_CONTINUO) {
+                    modeloPato = glm::rotate(
+                        modeloPato,
+                        PatoSecuencia::VELOCIDAD_ANGULAR_VUELO * posePato.tiempoClip,
+                        glm::vec3(0.0f, 1.0f, 0.0f));
+                }
+
+                // Modelo original: aprox. 4.57 x 1.70 x 1.90 unidades.
+                // Escala 0.12: aprox. 0.55 x 0.20 x 0.23 unidades.
+                modeloPato = glm::scale(modeloPato, glm::vec3(0.12f));
+
+                if (posePato.clip) {
+                    posePato.clip->dibujar(
+                        shaderPato, posePato.tiempoClip, texturaPato,
+                        modeloPato, view, projection, posePato.repetirClip);
+                }
+            }
+        }
+
         glDepthFunc(GL_LEQUAL); skyboxShader.use();
         glUniformMatrix4fv(ubicacionUniform(skyboxShader.ID, "view"), 1, GL_FALSE, glm::value_ptr(glm::mat4(glm::mat3(view))));
         glUniformMatrix4fv(ubicacionUniform(skyboxShader.ID, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
@@ -1639,6 +1758,14 @@ int main() {
     glDeleteVertexArrays(1, &hudVAO); glDeleteBuffers(1, &hudVBO);
 
     pescadorFisga.liberar();
+
+    // Liberar los recursos del pato mientras el contexto OpenGL sigue activo.
+    patoNado.liberar();
+    patoPreparado.liberar();
+    patoVuelo.liberar();
+    if (texturaPato) glDeleteTextures(1, &texturaPato);
+    if (shaderPato) glDeleteProgram(shaderPato);
+
     audioEngine.cleanup();
     glfwTerminate();
     return 0;
